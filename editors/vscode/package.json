@@ -1,0 +1,116 @@
+{
+  "name": "forge",
+  "displayName": "Forge",
+  "description": "Local AI coding agent with deep context. Zero cloud.",
+  "version": "0.1.0",
+  "publisher": "forge",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages", "Machine Learning", "Other"],
+  "keywords": ["ai", "coding", "assistant", "local", "ollama", "claude", "openai"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [{
+        "id": "forge",
+        "title": "Forge",
+        "icon": "$(symbol-misc)"
+      }]
+    },
+    "views": {
+      "forge": [{
+        "type": "webview",
+        "id": "forge.chatView",
+        "name": "Chat"
+      }]
+    },
+    "commands": [
+      { "command": "forge.openChat", "title": "Forge: Open Chat" },
+      { "command": "forge.explainCode", "title": "Forge: Explain Code" },
+      { "command": "forge.generateTests", "title": "Forge: Generate Tests" },
+      { "command": "forge.refactorCode", "title": "Forge: Refactor Code" },
+      { "command": "forge.fixBug", "title": "Forge: Fix Bug" },
+      { "command": "forge.clearChat", "title": "Forge: Clear Chat" }
+    ],
+    "menus": {
+      "editor/context": [
+        { "command": "forge.explainCode", "group": "forge@1", "when": "editorHasSelection" },
+        { "command": "forge.generateTests", "group": "forge@2", "when": "editorHasSelection" },
+        { "command": "forge.refactorCode", "group": "forge@3", "when": "editorHasSelection" },
+        { "command": "forge.fixBug", "group": "forge@4", "when": "editorHasSelection" }
+      ]
+    },
+    "configuration": {
+      "title": "Forge",
+      "properties": {
+        "forge.provider": {
+          "type": "string",
+          "default": "ollama",
+          "enum": ["claude", "openai", "ollama"],
+          "description": "AI provider to use"
+        },
+        "forge.claudeApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Claude API key"
+        },
+        "forge.claudeModel": {
+          "type": "string",
+          "default": "claude-sonnet-4-20250514",
+          "description": "Claude model"
+        },
+        "forge.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API key"
+        },
+        "forge.openaiModel": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "OpenAI model"
+        },
+        "forge.ollamaUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Ollama server URL"
+        },
+        "forge.ollamaModel": {
+          "type": "string",
+          "default": "qwen2.5-coder:7b",
+          "description": "Ollama model"
+        },
+        "forge.temperature": {
+          "type": "number",
+          "default": 0.7,
+          "description": "Temperature for generation"
+        },
+        "forge.maxTokens": {
+          "type": "number",
+          "default": 2048,
+          "description": "Max tokens for response"
+        },
+        "forge.includeFileContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include current file context"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  }
+}
+
