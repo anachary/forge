@@ -119,7 +119,7 @@ class AIService {
         return this.agentMode;
     }
     loadThreads() {
-        const saved = this.context.globalState.get(AIService.THREADS_KEY);
+        const saved = this.context.workspaceState.get(AIService.THREADS_KEY);
         if (saved && Array.isArray(saved)) {
             // Migrate old threads that may be missing new properties
             this.threads = saved.map(t => ({
@@ -138,7 +138,7 @@ class AIService {
                 }))
             }));
         }
-        this.currentThreadId = this.context.globalState.get(AIService.CURRENT_THREAD_KEY, '');
+        this.currentThreadId = this.context.workspaceState.get(AIService.CURRENT_THREAD_KEY, '');
         // Create default thread if none exist
         if (this.threads.length === 0) {
             this.createThread('New Chat');
@@ -148,8 +148,8 @@ class AIService {
         }
     }
     async saveThreads() {
-        await this.context.globalState.update(AIService.THREADS_KEY, this.threads);
-        await this.context.globalState.update(AIService.CURRENT_THREAD_KEY, this.currentThreadId);
+        await this.context.workspaceState.update(AIService.THREADS_KEY, this.threads);
+        await this.context.workspaceState.update(AIService.CURRENT_THREAD_KEY, this.currentThreadId);
     }
     getCurrentThread() {
         return this.threads.find(t => t.id === this.currentThreadId);
@@ -398,10 +398,10 @@ class AIService {
         }
     }
     saveDraft(text) {
-        this.context.globalState.update(AIService.DRAFT_KEY + '_' + this.currentThreadId, text);
+        this.context.workspaceState.update(AIService.DRAFT_KEY + '_' + this.currentThreadId, text);
     }
     getDraft() {
-        return this.context.globalState.get(AIService.DRAFT_KEY + '_' + this.currentThreadId, '');
+        return this.context.workspaceState.get(AIService.DRAFT_KEY + '_' + this.currentThreadId, '');
     }
     getWorkspacePath() {
         const folders = vscode.workspace.workspaceFolders;
@@ -429,7 +429,8 @@ class AIService {
                     // Stage the edit - don't write to file yet
                     this.addEditedFile(input.path);
                     this.addFileEdit(input.path, exists ? 'modify' : 'create', before, input.content, 'pending');
-                    return `File staged: ${input.path} (pending approval)`;
+                    // Return success message - the file operation is complete from the LLM's perspective
+                    return `Success: ${exists ? 'Modified' : 'Created'} ${input.path}`;
                 }
                 case 'list_files': {
                     const dirPath = path.join(workspacePath, input.path || '');
@@ -466,8 +467,10 @@ class AIService {
             provider: config.get('provider', 'claude'),
             claudeApiKey: config.get('claudeApiKey', ''),
             openaiApiKey: config.get('openaiApiKey', ''),
+            deepseekApiKey: config.get('deepseekApiKey', ''),
             claudeModel: config.get('claudeModel', 'claude-sonnet-4-20250514'),
             openaiModel: config.get('openaiModel', 'gpt-4o'),
+            deepseekModel: config.get('deepseekModel', 'deepseek-chat'),
             ollamaUrl: config.get('ollamaUrl', 'http://localhost:11434'),
             ollamaModel: config.get('ollamaModel', 'qwen2.5-coder:7b'),
             temperature: config.get('temperature', 0.7),
@@ -487,6 +490,13 @@ class AIService {
             if (!config.openaiApiKey) {
                 return { supported: false, reason: 'OpenAI API key not set' };
             }
+            return { supported: true };
+        }
+        if (config.provider === 'deepseek') {
+            if (!config.deepseekApiKey) {
+                return { supported: false, reason: 'DeepSeek API key not set' };
+            }
+            // DeepSeek supports function calling with deepseek-chat model
             return { supported: true };
         }
         if (config.provider === 'ollama') {
@@ -515,11 +525,58 @@ class AIService {
         return `\n\nCurrent file:\nFile: ${fileName}\nLanguage: ${language}\n\`\`\`${language}\n${content}${truncated}\n\`\`\``;
     }
     async sendMessageStream(message, includeContext, onChunk) {
-        // Re-read config fresh each time to get latest settings
+        // Wrapper that converts old callback to new event-based callback
+        const onEvent = (event) => {
+            if (event.type === 'text') {
+                onChunk(event.content || '', false);
+            }
+            else if (event.type === 'tool_start') {
+                onChunk(`\n⚡ ${this.getToolDisplayName(event.tool?.name || '')}...\n`, false);
+            }
+            else if (event.type === 'tool_end') {
+                const status = event.tool?.success ? '✓' : '✗';
+                onChunk(`${status} Done\n`, false);
+            }
+            else if (event.type === 'summary') {
+                // Show summary
+                const s = event.summary;
+                if (s) {
+                    const lines = ['\n---\n'];
+                    if (s.success) {
+                        lines.push(`✅ **Completed** (${(s.duration / 1000).toFixed(1)}s)\n`);
+                    }
+                    else {
+                        lines.push(`❌ **Failed**\n`);
+                    }
+                    if (s.filesCreated.length > 0) {
+                        lines.push(`📄 Created: ${s.filesCreated.join(', ')}\n`);
+                    }
+                    if (s.filesModified.length > 0) {
+                        lines.push(`📝 Modified: ${s.filesModified.join(', ')}\n`);
+                    }
+                    if (s.errors.length > 0) {
+                        lines.push(`⚠️ Errors: ${s.errors.join(', ')}\n`);
+                    }
+                    onChunk(lines.join(''), false);
+                }
+            }
+        };
+        return this.sendMessageStreamWithEvents(message, includeContext, onEvent, onChunk);
+    }
+    async sendMessageStreamWithEvents(message, includeContext, onEvent, onChunk) {
+        const startTime = Date.now();
         const config = this.getConfig();
+        // Track what happens during this request
+        const tracking = {
+            filesCreated: [],
+            filesModified: [],
+            errors: [],
+            tasksCompleted: 0,
+            tasksFailed: 0
+        };
         this.outputChannel.appendLine(`[${new Date().toISOString()}] Using provider: ${config.provider}`);
-        this.outputChannel.appendLine(`[${new Date().toISOString()}] OpenAI key set: ${config.openaiApiKey ? 'YES' : 'NO'}`);
-        this.outputChannel.appendLine(`[${new Date().toISOString()}] Claude key set: ${config.claudeApiKey ? 'YES' : 'NO'}`);
+        this.outputChannel.appendLine(`[${new Date().toISOString()}] Agent mode: ${this.agentMode ? 'ON' : 'OFF'}`);
+        onEvent({ type: 'log', content: `Provider: ${config.provider}, Agent: ${this.agentMode}` });
         this.addMessage({ role: 'user', content: message, timestamp: Date.now() });
         let fullMessage = message;
         if (includeContext) {
@@ -530,24 +587,135 @@ class AIService {
             content: msg.content
         }));
         messages[messages.length - 1].content = fullMessage;
-        // Try primary provider, fallback to Ollama on failure
+        // Create wrapped callback that tracks events
+        const wrappedOnEvent = (event) => {
+            onEvent(event);
+            // Track file operations
+            if (event.type === 'tool_end' && event.tool) {
+                if (event.tool.name === 'write_file' && event.tool.success) {
+                    const filePath = event.tool.input?.path;
+                    if (filePath) {
+                        // Check if file existed before
+                        if (event.tool.input?._wasCreate) {
+                            tracking.filesCreated.push(filePath);
+                        }
+                        else {
+                            tracking.filesModified.push(filePath);
+                        }
+                    }
+                }
+                if (event.tool.name === 'update_task' && event.tool.success) {
+                    const state = event.tool.input?.state;
+                    if (state === 'complete')
+                        tracking.tasksCompleted++;
+                    if (state === 'failed')
+                        tracking.tasksFailed++;
+                }
+                if (!event.tool.success && event.tool.result) {
+                    tracking.errors.push(`${event.tool.name}: ${event.tool.result.substring(0, 100)}`);
+                }
+            }
+        };
         try {
             this.outputChannel.appendLine(`[${new Date().toISOString()}] Calling ${config.provider}...`);
-            return await this.streamWithProvider(config.provider, messages, onChunk, config);
+            const result = await this.streamWithProviderEvents(config.provider, messages, wrappedOnEvent, config);
+            // Send summary if agent mode
+            if (this.agentMode) {
+                onEvent({
+                    type: 'summary',
+                    summary: {
+                        success: true,
+                        tasksCompleted: tracking.tasksCompleted,
+                        tasksFailed: tracking.tasksFailed,
+                        filesCreated: tracking.filesCreated,
+                        filesModified: tracking.filesModified,
+                        errors: tracking.errors,
+                        duration: Date.now() - startTime
+                    }
+                });
+            }
+            onChunk('', true);
+            return result;
         }
         catch (error) {
             this.outputChannel.appendLine(`[${new Date().toISOString()}] ${config.provider} failed: ${error.message}`);
-            // Fallback to Ollama only if primary provider fails
+            tracking.errors.push(error.message);
             if (config.provider !== 'ollama') {
-                onChunk(`\n\n[${config.provider} failed: ${error.message}]\nFalling back to Ollama...\n\n`, false);
+                onEvent({ type: 'log', content: `${config.provider} failed, falling back to Ollama` });
+                onEvent({ type: 'text', content: `\n\n[Falling back to Ollama...]\n\n` });
                 try {
-                    return await this.streamWithProvider('ollama', messages, onChunk, config);
+                    const result = await this.streamWithProviderEvents('ollama', messages, wrappedOnEvent, config);
+                    if (this.agentMode) {
+                        onEvent({
+                            type: 'summary',
+                            summary: {
+                                success: true,
+                                tasksCompleted: tracking.tasksCompleted,
+                                tasksFailed: tracking.tasksFailed,
+                                filesCreated: tracking.filesCreated,
+                                filesModified: tracking.filesModified,
+                                errors: tracking.errors,
+                                duration: Date.now() - startTime
+                            }
+                        });
+                    }
+                    onChunk('', true);
+                    return result;
                 }
                 catch (ollamaError) {
+                    tracking.errors.push(ollamaError.message);
+                    onEvent({
+                        type: 'summary',
+                        summary: {
+                            success: false,
+                            tasksCompleted: tracking.tasksCompleted,
+                            tasksFailed: tracking.tasksFailed,
+                            filesCreated: tracking.filesCreated,
+                            filesModified: tracking.filesModified,
+                            errors: tracking.errors,
+                            duration: Date.now() - startTime
+                        }
+                    });
                     throw new Error(`All providers failed. ${config.provider}: ${error.message}, Ollama: ${ollamaError.message}`);
                 }
             }
+            onEvent({
+                type: 'summary',
+                summary: {
+                    success: false,
+                    tasksCompleted: tracking.tasksCompleted,
+                    tasksFailed: tracking.tasksFailed,
+                    filesCreated: tracking.filesCreated,
+                    filesModified: tracking.filesModified,
+                    errors: tracking.errors,
+                    duration: Date.now() - startTime
+                }
+            });
             throw error;
+        }
+    }
+    getToolDisplayName(toolName) {
+        const names = {
+            'read_file': 'Reading file',
+            'write_file': 'Writing file',
+            'list_files': 'Listing files',
+            'add_task': 'Creating task',
+            'update_task': 'Updating task'
+        };
+        return names[toolName] || toolName;
+    }
+    async streamWithProviderEvents(provider, messages, onEvent, config) {
+        switch (provider) {
+            case 'claude':
+                return this.streamClaudeEvents(messages, onEvent, config);
+            case 'openai':
+                return this.streamOpenAIEvents(messages, onEvent, config);
+            case 'deepseek':
+                return this.streamDeepSeekEvents(messages, onEvent, config);
+            case 'ollama':
+                return this.streamOllamaEvents(messages, onEvent, config);
+            default:
+                throw new Error(`Unknown provider: ${provider}`);
         }
     }
     async streamWithProvider(provider, messages, onChunk, config) {
@@ -556,6 +724,8 @@ class AIService {
                 return this.streamClaude(messages, onChunk, config);
             case 'openai':
                 return this.streamOpenAI(messages, onChunk, config);
+            case 'deepseek':
+                return this.streamDeepSeek(messages, onChunk, config);
             case 'ollama':
                 return this.streamOllama(messages, onChunk, config);
             default:
@@ -832,6 +1002,160 @@ Be concise. Always use tools.`
         onChunk('', true);
         return fullResponse;
     }
+    async streamDeepSeek(messages, onChunk, config) {
+        if (!config.deepseekApiKey) {
+            throw new Error('DeepSeek API key not configured. Set it in Settings > forge.deepseekApiKey');
+        }
+        if (!this.agentMode) {
+            return this.deepseekSimple(messages, onChunk, config);
+        }
+        // Agent mode with tools - DeepSeek uses OpenAI-compatible format
+        const systemMsg = {
+            role: 'system',
+            content: `You are a coding assistant. You MUST use the provided tools to complete tasks.
+
+IMPORTANT: Always use tools to do work. Never just describe what you would do - actually do it using the tools.
+
+WORKFLOW:
+1. First, call add_task to create tasks for the work
+2. Call update_task to mark each task as in_progress when you start it
+3. Use read_file, write_file, list_files as needed
+4. Call update_task to mark tasks as complete when done
+
+Be concise. Always use tools.`
+        };
+        const deepseekTools = AGENT_TOOLS.map(t => ({
+            type: 'function',
+            function: {
+                name: t.name,
+                description: t.description,
+                parameters: t.input_schema
+            }
+        }));
+        return this.deepseekWithTools(messages, onChunk, config, systemMsg, deepseekTools);
+    }
+    async deepseekSimple(messages, onChunk, config) {
+        const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${config.deepseekApiKey}`
+            },
+            body: JSON.stringify({
+                model: config.deepseekModel,
+                messages: [{ role: 'system', content: 'You are a helpful coding assistant. Be concise and accurate.' }, ...messages],
+                temperature: config.temperature,
+                max_tokens: config.maxTokens,
+                stream: true
+            })
+        });
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`DeepSeek API error: ${response.status} - ${error}`);
+        }
+        const reader = response.body?.getReader();
+        if (!reader)
+            throw new Error('No response body');
+        const decoder = new TextDecoder();
+        let fullResponse = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n').filter(line => line.trim().startsWith('data: '));
+            for (const line of lines) {
+                const data = line.replace('data: ', '');
+                if (data === '[DONE]')
+                    continue;
+                try {
+                    const json = JSON.parse(data);
+                    const content = json.choices?.[0]?.delta?.content || '';
+                    if (content) {
+                        fullResponse += content;
+                        onChunk(content, false);
+                    }
+                }
+                catch (e) {
+                    // Skip invalid JSON
+                }
+            }
+        }
+        onChunk('', true);
+        this.saveAssistantMessage(fullResponse);
+        return fullResponse;
+    }
+    async deepseekWithTools(messages, onChunk, config, systemMsg, tools) {
+        let fullResponse = '';
+        let continueLoop = true;
+        let currentMessages = [systemMsg, ...messages.filter(m => m.role !== 'system')];
+        this.outputChannel.appendLine(`[${new Date().toISOString()}] DeepSeek agent mode starting with ${tools.length} tools`);
+        while (continueLoop) {
+            const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${config.deepseekApiKey}`
+                },
+                body: JSON.stringify({
+                    model: config.deepseekModel,
+                    messages: currentMessages,
+                    tools: tools,
+                    temperature: config.temperature,
+                    max_tokens: config.maxTokens
+                })
+            });
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(`DeepSeek API error: ${response.status} - ${error}`);
+            }
+            const json = await response.json();
+            this.outputChannel.appendLine(`[${new Date().toISOString()}] DeepSeek response: ${JSON.stringify(json).substring(0, 500)}`);
+            const choice = json.choices?.[0];
+            const msg = choice?.message;
+            if (!msg) {
+                continueLoop = false;
+                continue;
+            }
+            // Add assistant message to history
+            currentMessages.push(msg);
+            // Output text content
+            if (msg.content) {
+                fullResponse += msg.content;
+                onChunk(msg.content, false);
+            }
+            // Handle tool calls
+            if (msg.tool_calls && msg.tool_calls.length > 0) {
+                for (const toolCall of msg.tool_calls) {
+                    const name = toolCall.function.name;
+                    let args = {};
+                    try {
+                        args = JSON.parse(toolCall.function.arguments || '{}');
+                    }
+                    catch (e) {
+                        this.outputChannel.appendLine(`[${new Date().toISOString()}] Failed to parse tool args: ${toolCall.function.arguments}`);
+                    }
+                    onChunk(`\n[Calling ${name}...]\n`, false);
+                    fullResponse += `\n[Calling ${name}...]\n`;
+                    const result = await this.executeTool(name, args);
+                    currentMessages.push({
+                        role: 'tool',
+                        tool_call_id: toolCall.id,
+                        content: result
+                    });
+                    const shortResult = result.length > 200 ? result.substring(0, 200) + '...' : result;
+                    onChunk(`[Result: ${shortResult}]\n`, false);
+                    fullResponse += `[Result: ${shortResult}]\n`;
+                }
+            }
+            else {
+                continueLoop = false;
+            }
+        }
+        onChunk('', true);
+        this.saveAssistantMessage(fullResponse);
+        return fullResponse;
+    }
     async streamOllama(messages, onChunk, config) {
         if (!this.agentMode) {
             return this.ollamaSimple(messages, onChunk, config);
@@ -999,6 +1323,329 @@ Be concise. Always use tools.`;
         this.saveAssistantMessage(fullResponse);
         return fullResponse;
     }
+    // ========== Event-based streaming methods ==========
+    async streamClaudeEvents(messages, onEvent, config) {
+        if (!config.claudeApiKey) {
+            throw new Error('Claude API key not configured');
+        }
+        if (!this.agentMode) {
+            // Simple mode - just stream text
+            const onChunk = (chunk, done) => {
+                if (chunk)
+                    onEvent({ type: 'text', content: chunk });
+            };
+            return this.claudeSimple(messages, onChunk, config);
+        }
+        return this.agentLoopClaude(messages, onEvent, config);
+    }
+    async streamOpenAIEvents(messages, onEvent, config) {
+        if (!config.openaiApiKey) {
+            throw new Error('OpenAI API key not configured');
+        }
+        if (!this.agentMode) {
+            const onChunk = (chunk, done) => {
+                if (chunk)
+                    onEvent({ type: 'text', content: chunk });
+            };
+            return this.openaiSimple(messages, onChunk, config);
+        }
+        return this.agentLoopOpenAI(messages, onEvent, config);
+    }
+    async streamDeepSeekEvents(messages, onEvent, config) {
+        if (!config.deepseekApiKey) {
+            throw new Error('DeepSeek API key not configured');
+        }
+        if (!this.agentMode) {
+            const onChunk = (chunk, done) => {
+                if (chunk)
+                    onEvent({ type: 'text', content: chunk });
+            };
+            return this.deepseekSimple(messages, onChunk, config);
+        }
+        return this.agentLoopOpenAI(messages, onEvent, config, 'deepseek');
+    }
+    async streamOllamaEvents(messages, onEvent, config) {
+        if (!this.agentMode) {
+            const onChunk = (chunk, done) => {
+                if (chunk)
+                    onEvent({ type: 'text', content: chunk });
+            };
+            return this.ollamaSimple(messages, onChunk, config);
+        }
+        return this.agentLoopOllama(messages, onEvent, config);
+    }
+    // Unified agent loop for OpenAI-compatible APIs (OpenAI, DeepSeek)
+    async agentLoopOpenAI(messages, onEvent, config, provider = 'openai') {
+        const baseUrl = provider === 'deepseek' ? 'https://api.deepseek.com/v1' : 'https://api.openai.com/v1';
+        const apiKey = provider === 'deepseek' ? config.deepseekApiKey : config.openaiApiKey;
+        const model = provider === 'deepseek' ? config.deepseekModel : config.openaiModel;
+        const systemMsg = {
+            role: 'system',
+            content: `You are a coding assistant. Use the provided tools to complete tasks. Be concise.`
+        };
+        const tools = AGENT_TOOLS.map(t => ({
+            type: 'function',
+            function: { name: t.name, description: t.description, parameters: t.input_schema }
+        }));
+        let fullResponse = '';
+        let continueLoop = true;
+        let currentMessages = [systemMsg, ...messages.filter(m => m.role !== 'system')];
+        while (continueLoop) {
+            const response = await fetch(`${baseUrl}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: currentMessages,
+                    tools,
+                    temperature: config.temperature,
+                    max_tokens: config.maxTokens
+                })
+            });
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(`${provider} error: ${response.status} - ${error}`);
+            }
+            const json = await response.json();
+            const message = json.choices?.[0]?.message;
+            if (!message) {
+                continueLoop = false;
+                continue;
+            }
+            currentMessages.push(message);
+            if (message.content) {
+                fullResponse += message.content;
+                onEvent({ type: 'text', content: message.content });
+            }
+            if (message.tool_calls && message.tool_calls.length > 0) {
+                for (const toolCall of message.tool_calls) {
+                    const toolName = toolCall.function.name;
+                    let toolInput = {};
+                    try {
+                        toolInput = JSON.parse(toolCall.function.arguments || '{}');
+                    }
+                    catch (e) { }
+                    const startTime = Date.now();
+                    onEvent({ type: 'tool_start', tool: { name: toolName, input: toolInput } });
+                    this.outputChannel.appendLine(`[${new Date().toISOString()}] Tool: ${toolName} Input: ${JSON.stringify(toolInput)}`);
+                    const result = await this.executeTool(toolName, toolInput);
+                    const duration = Date.now() - startTime;
+                    const success = !result.startsWith('Error');
+                    onEvent({ type: 'tool_end', tool: { name: toolName, input: toolInput, result, success, duration } });
+                    this.outputChannel.appendLine(`[${new Date().toISOString()}] Tool result (${duration}ms): ${result.substring(0, 200)}`);
+                    currentMessages.push({
+                        role: 'tool',
+                        tool_call_id: toolCall.id,
+                        content: result
+                    });
+                }
+            }
+            else {
+                continueLoop = false;
+            }
+        }
+        this.saveAssistantMessage(fullResponse);
+        return fullResponse;
+    }
+    async agentLoopClaude(messages, onEvent, config) {
+        const systemMsg = `You are a coding assistant. Use the provided tools to complete tasks. Be concise.`;
+        let fullResponse = '';
+        let continueLoop = true;
+        let currentMessages = [...messages.filter(m => m.role !== 'system')];
+        while (continueLoop) {
+            const response = await fetch('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': config.claudeApiKey,
+                    'anthropic-version': '2023-06-01'
+                },
+                body: JSON.stringify({
+                    model: config.claudeModel,
+                    max_tokens: config.maxTokens,
+                    system: systemMsg,
+                    messages: currentMessages,
+                    tools: AGENT_TOOLS
+                })
+            });
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(`Claude error: ${response.status} - ${error}`);
+            }
+            const data = await response.json();
+            const toolUses = [];
+            for (const block of data.content || []) {
+                if (block.type === 'text') {
+                    fullResponse += block.text;
+                    onEvent({ type: 'text', content: block.text });
+                }
+                else if (block.type === 'tool_use') {
+                    toolUses.push(block);
+                }
+            }
+            if (toolUses.length > 0 && data.stop_reason === 'tool_use') {
+                currentMessages.push({ role: 'assistant', content: data.content });
+                const toolResults = [];
+                for (const tool of toolUses) {
+                    const startTime = Date.now();
+                    onEvent({ type: 'tool_start', tool: { name: tool.name, input: tool.input } });
+                    this.outputChannel.appendLine(`[${new Date().toISOString()}] Tool: ${tool.name} Input: ${JSON.stringify(tool.input)}`);
+                    const result = await this.executeTool(tool.name, tool.input);
+                    const duration = Date.now() - startTime;
+                    const success = !result.startsWith('Error');
+                    onEvent({ type: 'tool_end', tool: { name: tool.name, input: tool.input, result, success, duration } });
+                    this.outputChannel.appendLine(`[${new Date().toISOString()}] Tool result (${duration}ms): ${result.substring(0, 200)}`);
+                    toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: result });
+                }
+                currentMessages.push({ role: 'user', content: toolResults });
+            }
+            else {
+                continueLoop = false;
+            }
+        }
+        this.saveAssistantMessage(fullResponse);
+        return fullResponse;
+    }
+    async agentLoopOllama(messages, onEvent, config) {
+        const systemMsg = `You are a coding assistant. Use the provided tools to complete tasks.
+
+IMPORTANT RULES:
+- Each tool call that returns "Success" means the operation completed. Do NOT retry.
+- After write_file returns "Success: Created/Modified [file]", the file is done. Move on.
+- After completing all requested work, respond with a brief summary and STOP.
+- Do not output raw JSON. Use the tools provided.`;
+        const ollamaTools = AGENT_TOOLS.map(t => ({
+            type: 'function',
+            function: { name: t.name, description: t.description, parameters: t.input_schema }
+        }));
+        let fullResponse = '';
+        let continueLoop = true;
+        let iterations = 0;
+        const MAX_ITERATIONS = 3; // Prevent infinite loops
+        let toolsExecuted = [];
+        let currentMessages = [{ role: 'system', content: systemMsg }, ...messages.filter(m => m.role !== 'system')];
+        // Helper to extract JSON tool call from content (handles multi-line)
+        const parseToolCallFromContent = (content) => {
+            if (!content)
+                return null;
+            // Try to find a JSON object with "name" and "arguments"
+            const jsonMatch = content.match(/\{[\s\S]*?"name"\s*:\s*"([^"]+)"[\s\S]*?"arguments"\s*:\s*(\{[\s\S]*?\})\s*\}/);
+            if (jsonMatch) {
+                try {
+                    const name = jsonMatch[1];
+                    const args = JSON.parse(jsonMatch[2]);
+                    return { name, arguments: args };
+                }
+                catch (e) {
+                    // Try parsing the whole match
+                    try {
+                        const parsed = JSON.parse(jsonMatch[0]);
+                        if (parsed.name && parsed.arguments) {
+                            return { name: parsed.name, arguments: parsed.arguments };
+                        }
+                    }
+                    catch (e2) { }
+                }
+            }
+            return null;
+        };
+        // Helper to filter JSON tool calls from content (handles multi-line)
+        const filterToolCallJson = (content) => {
+            if (!content)
+                return '';
+            // Remove JSON blocks that look like tool calls (multi-line aware)
+            let filtered = content.replace(/\{[\s\S]*?"name"\s*:\s*"[^"]+"[\s\S]*?"arguments"\s*:\s*\{[\s\S]*?\}\s*\}/g, '');
+            // Clean up extra whitespace and leading/trailing }
+            filtered = filtered.replace(/^\s*\}\s*/gm, '').trim();
+            return filtered;
+        };
+        while (continueLoop && iterations < MAX_ITERATIONS) {
+            iterations++;
+            const response = await fetch(`${config.ollamaUrl}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: config.ollamaModel,
+                    messages: currentMessages,
+                    stream: false,
+                    tools: ollamaTools,
+                    options: { temperature: config.temperature, num_predict: config.maxTokens }
+                })
+            });
+            if (!response.ok) {
+                throw new Error(`Ollama error: ${response.status}`);
+            }
+            const json = await response.json();
+            const msg = json.message;
+            // Check if content contains a JSON tool call (some models do this)
+            let toolCallsToExecute = [];
+            let filteredContent = '';
+            if (msg?.content) {
+                const parsedTool = parseToolCallFromContent(msg.content);
+                if (parsedTool) {
+                    // Content is a tool call JSON - don't display it, execute it
+                    toolCallsToExecute.push(parsedTool);
+                }
+                else {
+                    // Filter any embedded tool call JSON from the content
+                    filteredContent = filterToolCallJson(msg.content);
+                    if (filteredContent) {
+                        fullResponse += filteredContent;
+                        onEvent({ type: 'text', content: filteredContent });
+                    }
+                }
+            }
+            // Add official tool_calls if present
+            if (msg?.tool_calls && msg.tool_calls.length > 0) {
+                for (const tc of msg.tool_calls) {
+                    if (tc.function?.name && tc.function?.arguments) {
+                        toolCallsToExecute.push({ name: tc.function.name, arguments: tc.function.arguments });
+                    }
+                }
+            }
+            // Execute all tool calls
+            if (toolCallsToExecute.length > 0) {
+                currentMessages.push(msg);
+                for (const toolCall of toolCallsToExecute) {
+                    const toolName = toolCall.name;
+                    const toolInput = toolCall.arguments;
+                    const startTime = Date.now();
+                    onEvent({ type: 'tool_start', tool: { name: toolName, input: toolInput } });
+                    this.outputChannel.appendLine(`[${new Date().toISOString()}] Tool: ${toolName} Input: ${JSON.stringify(toolInput)}`);
+                    const result = await this.executeTool(toolName, toolInput);
+                    const duration = Date.now() - startTime;
+                    const success = !result.startsWith('Error');
+                    onEvent({ type: 'tool_end', tool: { name: toolName, input: toolInput, result, success, duration } });
+                    this.outputChannel.appendLine(`[${new Date().toISOString()}] Tool result (${duration}ms): ${result.substring(0, 200)}`);
+                    toolsExecuted.push({ name: toolName, success });
+                    currentMessages.push({ role: 'tool', content: result });
+                }
+            }
+            else {
+                continueLoop = false;
+            }
+        }
+        // Generate summary
+        if (toolsExecuted.length > 0) {
+            const successCount = toolsExecuted.filter(t => t.success).length;
+            const failCount = toolsExecuted.filter(t => !t.success).length;
+            const summaryText = successCount === toolsExecuted.length
+                ? `✅ Completed ${successCount} action${successCount > 1 ? 's' : ''} successfully`
+                : `⚠️ ${successCount} succeeded, ${failCount} failed`;
+            onEvent({ type: 'text', content: '\n\n' + summaryText });
+            fullResponse += '\n\n' + summaryText;
+        }
+        if (iterations >= MAX_ITERATIONS) {
+            const warningText = '\n\n⚠️ Stopped: Maximum iterations reached';
+            onEvent({ type: 'text', content: warningText });
+            fullResponse += warningText;
+        }
+        this.saveAssistantMessage(fullResponse);
+        return fullResponse;
+    }
     saveAssistantMessage(content) {
         this.addMessage({ role: 'assistant', content, timestamp: Date.now() });
     }
@@ -1007,6 +1654,14 @@ Be concise. Always use tools.`;
         if (thread) {
             thread.messages.push(message);
             thread.updatedAt = Date.now();
+            // Auto-update thread title with first user message
+            if (message.role === 'user' && thread.messages.length === 1 && thread.name === 'New Chat') {
+                // Truncate to first 50 characters
+                const title = message.content.length > 50
+                    ? message.content.substring(0, 50) + '...'
+                    : message.content;
+                thread.name = title;
+            }
             this.saveThreads();
         }
     }
@@ -1025,6 +1680,8 @@ Be concise. Always use tools.`;
         if (thread) {
             thread.messages = [];
             thread.editedFiles = [];
+            thread.tasks = [];
+            thread.edits = [];
             this.saveThreads();
         }
     }

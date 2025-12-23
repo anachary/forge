@@ -46,7 +46,7 @@
         "forge.provider": {
           "type": "string",
           "default": "ollama",
-          "enum": ["claude", "openai", "ollama"],
+          "enum": ["claude", "openai", "deepseek", "ollama"],
           "description": "AI provider to use"
         },
         "forge.claudeApiKey": {
@@ -68,6 +68,16 @@
           "type": "string",
           "default": "gpt-4o",
           "description": "OpenAI model"
+        },
+        "forge.deepseekApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API key"
+        },
+        "forge.deepseekModel": {
+          "type": "string",
+          "default": "deepseek-chat",
+          "description": "DeepSeek model (deepseek-chat or deepseek-coder)"
         },
         "forge.ollamaUrl": {
           "type": "string",
