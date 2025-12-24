@@ -165,6 +165,17 @@ const AGENT_TOOLS = [
             },
             required: ['path', 'line', 'character']
         }
+    },
+    {
+        name: 'get_file_symbols',
+        description: 'Get all symbols (functions, classes, variables, etc.) defined in a file. Useful for understanding file structure.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Path to the file to analyze' }
+            },
+            required: ['path']
+        }
     }
 ];
 class AIService {
@@ -690,6 +701,40 @@ class AIService {
                         // Ignore read errors
                     }
                     return `Definition found at ${defPath}:${defLine}:${defChar}${context}`;
+                }
+                case 'get_file_symbols': {
+                    const filePath = path.join(workspacePath, input.path);
+                    if (!fs.existsSync(filePath)) {
+                        return `Error: File not found: ${input.path}`;
+                    }
+                    const uri = vscode.Uri.file(filePath);
+                    // Use VS Code's built-in document symbol provider
+                    const symbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', uri);
+                    if (!symbols || symbols.length === 0) {
+                        return `No symbols found in ${input.path}`;
+                    }
+                    const symbolKindNames = {
+                        0: 'File', 1: 'Module', 2: 'Namespace', 3: 'Package',
+                        4: 'Class', 5: 'Method', 6: 'Property', 7: 'Field',
+                        8: 'Constructor', 9: 'Enum', 10: 'Interface', 11: 'Function',
+                        12: 'Variable', 13: 'Constant', 14: 'String', 15: 'Number',
+                        16: 'Boolean', 17: 'Array', 18: 'Object', 19: 'Key',
+                        20: 'Null', 21: 'EnumMember', 22: 'Struct', 23: 'Event',
+                        24: 'Operator', 25: 'TypeParameter'
+                    };
+                    const formatSymbol = (sym, indent = '') => {
+                        const kind = symbolKindNames[sym.kind] || 'Unknown';
+                        const line = sym.range.start.line + 1;
+                        let result = `${indent}${kind}: ${sym.name} (line ${line})`;
+                        if (sym.children && sym.children.length > 0) {
+                            for (const child of sym.children) {
+                                result += '\n' + formatSymbol(child, indent + '  ');
+                            }
+                        }
+                        return result;
+                    };
+                    const output = symbols.map(s => formatSymbol(s)).join('\n');
+                    return `Symbols in ${input.path}:\n${output}`;
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
