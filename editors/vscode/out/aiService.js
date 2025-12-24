@@ -113,6 +113,20 @@ const AGENT_TOOLS = [
             },
             required: ['command']
         }
+    },
+    {
+        name: 'search_files',
+        description: 'Search for text or regex pattern across files in the workspace. Returns matching lines with file paths and line numbers.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                pattern: { type: 'string', description: 'Text or regex pattern to search for' },
+                path: { type: 'string', description: 'Optional directory to search in (relative to workspace). Defaults to entire workspace.' },
+                filePattern: { type: 'string', description: 'Optional glob pattern to filter files (e.g., "*.ts", "*.py")' },
+                maxResults: { type: 'number', description: 'Maximum number of results to return (default: 50)' }
+            },
+            required: ['pattern']
+        }
     }
 ];
 class AIService {
@@ -487,6 +501,64 @@ class AIService {
                         const exitCode = execError.status || 1;
                         return `Command failed (exit code ${exitCode}):\n${stderr}\n${stdout}`.trim();
                     }
+                }
+                case 'search_files': {
+                    const searchDir = input.path ? path.join(workspacePath, input.path) : workspacePath;
+                    if (!fs.existsSync(searchDir)) {
+                        return `Error: Directory not found: ${input.path}`;
+                    }
+                    const maxResults = input.maxResults || 50;
+                    const results = [];
+                    const regex = new RegExp(input.pattern, 'gi');
+                    const searchRecursive = (dir) => {
+                        if (results.length >= maxResults)
+                            return;
+                        const entries = fs.readdirSync(dir, { withFileTypes: true });
+                        for (const entry of entries) {
+                            if (results.length >= maxResults)
+                                break;
+                            const fullPath = path.join(dir, entry.name);
+                            const relativePath = path.relative(workspacePath, fullPath);
+                            // Skip common non-code directories
+                            if (entry.isDirectory()) {
+                                if (['node_modules', '.git', 'dist', 'out', '.next', '__pycache__', 'venv', '.venv'].includes(entry.name)) {
+                                    continue;
+                                }
+                                searchRecursive(fullPath);
+                            }
+                            else if (entry.isFile()) {
+                                // Check file pattern filter
+                                if (input.filePattern) {
+                                    const pattern = input.filePattern.replace(/\*/g, '.*');
+                                    if (!new RegExp(pattern).test(entry.name))
+                                        continue;
+                                }
+                                // Skip binary and large files
+                                const stats = fs.statSync(fullPath);
+                                if (stats.size > 1024 * 1024)
+                                    continue; // Skip files > 1MB
+                                try {
+                                    const content = fs.readFileSync(fullPath, 'utf-8');
+                                    const lines = content.split('\n');
+                                    lines.forEach((line, idx) => {
+                                        if (results.length >= maxResults)
+                                            return;
+                                        if (regex.test(line)) {
+                                            results.push(`${relativePath}:${idx + 1}: ${line.trim().substring(0, 200)}`);
+                                        }
+                                        regex.lastIndex = 0; // Reset regex state
+                                    });
+                                }
+                                catch (e) {
+                                    // Skip files that can't be read as text
+                                }
+                            }
+                        }
+                    };
+                    searchRecursive(searchDir);
+                    return results.length > 0
+                        ? results.join('\n')
+                        : `No matches found for "${input.pattern}"`;
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
