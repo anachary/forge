@@ -167,6 +167,19 @@ const AGENT_TOOLS = [
             },
             required: []
         }
+    },
+    {
+        name: 'find_references',
+        description: 'Find all references/usages of a symbol at a specific location. Use to understand how a function, variable, or class is used across the codebase.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Path to the file containing the symbol' },
+                line: { type: 'number', description: 'Line number (1-based) where the symbol is located' },
+                character: { type: 'number', description: 'Character/column position (0-based) of the symbol' }
+            },
+            required: ['path', 'line', 'character']
+        }
     }
 ];
 
@@ -684,6 +697,35 @@ export class AIService {
 
                     const summary = `Found ${diagnostics.length} diagnostic(s):\n`;
                     return summary + output;
+                }
+                case 'find_references': {
+                    const filePath = path.join(workspacePath, input.path);
+                    if (!fs.existsSync(filePath)) {
+                        return `Error: File not found: ${input.path}`;
+                    }
+
+                    const uri = vscode.Uri.file(filePath);
+                    const position = new vscode.Position(input.line - 1, input.character);
+
+                    // Use VS Code's built-in find references
+                    const locations = await vscode.commands.executeCommand<vscode.Location[]>(
+                        'vscode.executeReferenceProvider',
+                        uri,
+                        position
+                    );
+
+                    if (!locations || locations.length === 0) {
+                        return `No references found at ${input.path}:${input.line}:${input.character}`;
+                    }
+
+                    const results = locations.map(loc => {
+                        const relativePath = vscode.workspace.asRelativePath(loc.uri);
+                        const line = loc.range.start.line + 1;
+                        const char = loc.range.start.character;
+                        return `${relativePath}:${line}:${char}`;
+                    });
+
+                    return `Found ${locations.length} reference(s):\n${results.join('\n')}`;
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
