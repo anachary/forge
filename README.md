@@ -1,20 +1,56 @@
- Forge
+# Forge
 
-**Local AI Coding Agent**
+**AI Coding Agent for VS Code**
 
-*Deep context. Full autonomy. Zero cloud.*
+*Cursor/Windsurf alternative with multiple AI providers*
 
-Forge is a fully local, privacy-first AI coding agent that understands your entire codebase through semantic search, call graph analysis, and git history.
+Forge is a powerful AI coding agent for VS Code that supports **Claude**, **OpenAI**, **DeepSeek**, and **Ollama** (local). Get the same agentic coding experience as Cursor or Windsurf, with the flexibility to choose your AI provider.
 
-## Features
+## ✨ Features
 
-- **100% Local** - Runs entirely on your machine using Ollama
+- **Multiple AI Providers** - Claude, OpenAI, DeepSeek, or fully local with Ollama
+- **Agentic Coding** - AI can read, write, and modify files autonomously
+- **Tool Execution UI** - Visual feedback for AI actions (like Cursor/Windsurf)
+- **Task & Edit Tracking** - See what the AI is working on and what it changed
 - **Deep Context** - Semantic code search with embeddings
 - **Call Graph Analysis** - Understands code relationships
 - **Git History** - Leverages version control context
 - **Web Search** - DuckDuckGo integration (no API key)
-- **MCP Support** - Works with Claude Desktop and VS Code
-- **Agentic** - Tool use with ReAct pattern
+- **MCP Support** - Works with Claude Desktop
+- **100% Private Option** - Run fully local with Ollama
+
+## 🚀 VS Code Extension
+
+The Forge VS Code extension provides a Cursor/Windsurf-like experience right in your editor.
+
+### Supported AI Providers
+
+| Provider | Type | Best For |
+|----------|------|----------|
+| **Claude** | Cloud | Best code understanding & generation |
+| **OpenAI** | Cloud | GPT-4o, fast responses |
+| **DeepSeek** | Cloud | Cost-effective, great for code |
+| **Ollama** | Local | Privacy, offline use, free |
+
+### Installation
+
+1. Install the extension from the VS Code marketplace (or build from source)
+2. Open the Forge panel in the sidebar
+3. Configure your preferred AI provider in settings:
+   - **Claude**: Add your Anthropic API key
+   - **OpenAI**: Add your OpenAI API key
+   - **DeepSeek**: Add your DeepSeek API key
+   - **Ollama**: Just works locally (install [Ollama](https://ollama.ai) first)
+
+### Features
+
+- **Chat Interface** - Natural conversation with your AI
+- **Agent Mode** - AI can execute tools to read/write files, run commands
+- **Tool Execution Cards** - See each action the AI takes in real-time
+- **Logs Tab** - Detailed history of all tool executions
+- **Tasks Tab** - Track work items the AI is handling
+- **Edits Tab** - Review all file changes made by the AI
+- **Thread Management** - Multiple conversation threads with history
 
 ## Quick Start
 
@@ -348,16 +384,20 @@ Response to User
 
 ## Comparison with Other Tools
 
-| Feature | Forge | Cursor | Copilot | Cline |
-|---------|-------|--------|---------|-------|
-| Local LLM | Yes | No | No | Yes |
-| Privacy | 100% | Cloud | Cloud | Local |
-| Semantic Search | Yes | Yes | Limited | No |
-| Call Graph | Yes | No | No | No |
-| Git Context | Yes | Limited | No | No |
-| Web Search | Yes | No | No | No |
-| MCP Support | Yes | No | No | Yes |
-| Free | Yes | Paid | Paid | Yes |
+| Feature | Forge | Cursor | Windsurf | Copilot |
+|---------|-------|--------|----------|---------|
+| Claude Support | ✅ | ✅ | ✅ | ❌ |
+| OpenAI Support | ✅ | ✅ | ✅ | ✅ |
+| DeepSeek Support | ✅ | ❌ | ❌ | ❌ |
+| Local LLM (Ollama) | ✅ | ❌ | ❌ | ❌ |
+| 100% Private Option | ✅ | ❌ | ❌ | ❌ |
+| Semantic Search | ✅ | ✅ | ✅ | Limited |
+| Call Graph | ✅ | ❌ | ❌ | ❌ |
+| Git Context | ✅ | Limited | Limited | ❌ |
+| Tool Execution UI | ✅ | ✅ | ✅ | ❌ |
+| Free | ✅* | Paid | Paid | Paid |
+
+*Free with Ollama (local). Cloud providers require API keys with usage-based pricing.
 
 ## License
 
