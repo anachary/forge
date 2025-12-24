@@ -129,6 +129,18 @@ const AGENT_TOOLS = [
             },
             required: ['taskId', 'state']
         }
+    },
+    {
+        name: 'run_command',
+        description: 'Execute a shell command in the workspace directory. Use for running tests, builds, installing packages, git commands, etc.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                command: { type: 'string', description: 'The shell command to execute' },
+                cwd: { type: 'string', description: 'Optional subdirectory to run the command in (relative to workspace)' }
+            },
+            required: ['command']
+        }
     }
 ];
 
@@ -516,6 +528,28 @@ export class AIService {
                 case 'update_task': {
                     const success = this.updateTask(input.taskId, input.state, input.error);
                     return success ? `Task ${input.taskId} updated to ${input.state}` : `Task ${input.taskId} not found`;
+                }
+                case 'run_command': {
+                    const { execSync } = require('child_process');
+                    const cwd = input.cwd ? path.join(workspacePath, input.cwd) : workspacePath;
+                    if (input.cwd && !fs.existsSync(cwd)) {
+                        return `Error: Directory not found: ${input.cwd}`;
+                    }
+                    try {
+                        const output = execSync(input.command, {
+                            cwd,
+                            encoding: 'utf-8',
+                            timeout: 60000, // 60 second timeout
+                            maxBuffer: 1024 * 1024 // 1MB buffer
+                        });
+                        return output || 'Command completed successfully (no output)';
+                    } catch (execError: any) {
+                        // Return both stdout and stderr for failed commands
+                        const stdout = execError.stdout || '';
+                        const stderr = execError.stderr || '';
+                        const exitCode = execError.status || 1;
+                        return `Command failed (exit code ${exitCode}):\n${stderr}\n${stdout}`.trim();
+                    }
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
