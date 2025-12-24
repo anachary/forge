@@ -180,6 +180,19 @@ const AGENT_TOOLS = [
             },
             required: ['path', 'line', 'character']
         }
+    },
+    {
+        name: 'go_to_definition',
+        description: 'Get the definition location of a symbol. Use to find where a function, class, or variable is defined.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Path to the file containing the symbol' },
+                line: { type: 'number', description: 'Line number (1-based) where the symbol is used' },
+                character: { type: 'number', description: 'Character/column position (0-based) of the symbol' }
+            },
+            required: ['path', 'line', 'character']
+        }
     }
 ];
 
@@ -726,6 +739,49 @@ export class AIService {
                     });
 
                     return `Found ${locations.length} reference(s):\n${results.join('\n')}`;
+                }
+                case 'go_to_definition': {
+                    const filePath = path.join(workspacePath, input.path);
+                    if (!fs.existsSync(filePath)) {
+                        return `Error: File not found: ${input.path}`;
+                    }
+
+                    const uri = vscode.Uri.file(filePath);
+                    const position = new vscode.Position(input.line - 1, input.character);
+
+                    // Use VS Code's built-in definition provider
+                    const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+                        'vscode.executeDefinitionProvider',
+                        uri,
+                        position
+                    );
+
+                    if (!definitions || definitions.length === 0) {
+                        return `No definition found at ${input.path}:${input.line}:${input.character}`;
+                    }
+
+                    // Return the first definition with some context
+                    const def = definitions[0];
+                    const defPath = vscode.workspace.asRelativePath(def.uri);
+                    const defLine = def.range.start.line + 1;
+                    const defChar = def.range.start.character;
+
+                    // Try to read a few lines around the definition
+                    let context = '';
+                    try {
+                        const defFilePath = def.uri.fsPath;
+                        const content = fs.readFileSync(defFilePath, 'utf-8');
+                        const lines = content.split('\n');
+                        const startLine = Math.max(0, def.range.start.line - 2);
+                        const endLine = Math.min(lines.length, def.range.start.line + 5);
+                        context = '\n\nContext:\n' + lines.slice(startLine, endLine).map((l, i) =>
+                            `${startLine + i + 1}: ${l}`
+                        ).join('\n');
+                    } catch (e) {
+                        // Ignore read errors
+                    }
+
+                    return `Definition found at ${defPath}:${defLine}:${defChar}${context}`;
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
