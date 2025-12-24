@@ -188,6 +188,29 @@ const AGENT_TOOLS = [
             },
             required: ['query']
         }
+    },
+    {
+        name: 'rename_file',
+        description: 'Rename or move a file to a new location.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                oldPath: { type: 'string', description: 'Current path of the file' },
+                newPath: { type: 'string', description: 'New path for the file' }
+            },
+            required: ['oldPath', 'newPath']
+        }
+    },
+    {
+        name: 'delete_file',
+        description: 'Delete a file. Use with caution.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Path to the file to delete' }
+            },
+            required: ['path']
+        }
     }
 ];
 class AIService {
@@ -810,6 +833,35 @@ class AIService {
                         });
                         req.end();
                     });
+                }
+                case 'rename_file': {
+                    const oldFilePath = path.join(workspacePath, input.oldPath);
+                    const newFilePath = path.join(workspacePath, input.newPath);
+                    if (!fs.existsSync(oldFilePath)) {
+                        return `Error: File not found: ${input.oldPath}`;
+                    }
+                    if (fs.existsSync(newFilePath)) {
+                        return `Error: Target file already exists: ${input.newPath}`;
+                    }
+                    // Ensure target directory exists
+                    const targetDir = path.dirname(newFilePath);
+                    if (!fs.existsSync(targetDir)) {
+                        fs.mkdirSync(targetDir, { recursive: true });
+                    }
+                    fs.renameSync(oldFilePath, newFilePath);
+                    return `Successfully renamed ${input.oldPath} to ${input.newPath}`;
+                }
+                case 'delete_file': {
+                    const filePath = path.join(workspacePath, input.path);
+                    if (!fs.existsSync(filePath)) {
+                        return `Error: File not found: ${input.path}`;
+                    }
+                    const stat = fs.statSync(filePath);
+                    if (stat.isDirectory()) {
+                        return `Error: Cannot delete directory with this tool. Use for files only.`;
+                    }
+                    fs.unlinkSync(filePath);
+                    return `Successfully deleted ${input.path}`;
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
