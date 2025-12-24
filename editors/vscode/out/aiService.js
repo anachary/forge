@@ -127,6 +127,18 @@ const AGENT_TOOLS = [
             },
             required: ['pattern']
         }
+    },
+    {
+        name: 'get_diagnostics',
+        description: 'Get IDE diagnostics (errors, warnings, hints) for files. Use to check for type errors, lint issues, or problems after editing.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Optional file or directory path. If not provided, returns diagnostics for all open files.' },
+                severity: { type: 'string', enum: ['error', 'warning', 'info', 'hint', 'all'], description: 'Filter by severity (default: all)' }
+            },
+            required: []
+        }
     }
 ];
 class AIService {
@@ -559,6 +571,47 @@ class AIService {
                     return results.length > 0
                         ? results.join('\n')
                         : `No matches found for "${input.pattern}"`;
+                }
+                case 'get_diagnostics': {
+                    const severityMap = {
+                        0: 'error',
+                        1: 'warning',
+                        2: 'info',
+                        3: 'hint'
+                    };
+                    const severityFilter = input.severity || 'all';
+                    let diagnostics = [];
+                    // Get all diagnostics from VS Code
+                    const allDiagnostics = vscode.languages.getDiagnostics();
+                    for (const [uri, fileDiagnostics] of allDiagnostics) {
+                        const relativePath = vscode.workspace.asRelativePath(uri);
+                        // Filter by path if specified
+                        if (input.path && !relativePath.startsWith(input.path)) {
+                            continue;
+                        }
+                        for (const diag of fileDiagnostics) {
+                            const severity = severityMap[diag.severity] || 'unknown';
+                            // Filter by severity
+                            if (severityFilter !== 'all' && severity !== severityFilter) {
+                                continue;
+                            }
+                            diagnostics.push({
+                                file: relativePath,
+                                line: diag.range.start.line + 1,
+                                severity,
+                                message: diag.message
+                            });
+                        }
+                    }
+                    if (diagnostics.length === 0) {
+                        return input.path
+                            ? `No diagnostics found for "${input.path}"`
+                            : 'No diagnostics found in workspace';
+                    }
+                    // Format output
+                    const output = diagnostics.map(d => `${d.file}:${d.line} [${d.severity.toUpperCase()}] ${d.message}`).join('\n');
+                    const summary = `Found ${diagnostics.length} diagnostic(s):\n`;
+                    return summary + output;
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
