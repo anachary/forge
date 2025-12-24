@@ -176,6 +176,18 @@ const AGENT_TOOLS = [
             },
             required: ['path']
         }
+    },
+    {
+        name: 'web_search',
+        description: 'Search the web for information using DuckDuckGo. Use for documentation, API references, error solutions, etc.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                query: { type: 'string', description: 'Search query' },
+                maxResults: { type: 'number', description: 'Maximum number of results (default: 5)' }
+            },
+            required: ['query']
+        }
     }
 ];
 class AIService {
@@ -735,6 +747,69 @@ class AIService {
                     };
                     const output = symbols.map(s => formatSymbol(s)).join('\n');
                     return `Symbols in ${input.path}:\n${output}`;
+                }
+                case 'web_search': {
+                    const query = encodeURIComponent(input.query);
+                    const maxResults = input.maxResults || 5;
+                    // Use DuckDuckGo HTML search (no API key required)
+                    const https = await Promise.resolve().then(() => __importStar(require('https')));
+                    return new Promise((resolve) => {
+                        const url = `https://html.duckduckgo.com/html/?q=${query}`;
+                        const req = https.request(url, {
+                            method: 'GET',
+                            headers: {
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                            }
+                        }, (res) => {
+                            let data = '';
+                            res.on('data', (chunk) => data += chunk.toString());
+                            res.on('end', () => {
+                                try {
+                                    // Parse results from HTML
+                                    const results = [];
+                                    // Match result blocks
+                                    const resultRegex = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>([^<]*)/g;
+                                    let match;
+                                    while ((match = resultRegex.exec(data)) !== null && results.length < maxResults) {
+                                        results.push({
+                                            url: match[1],
+                                            title: match[2].trim(),
+                                            snippet: match[3].trim()
+                                        });
+                                    }
+                                    // Fallback: simpler regex if above doesn't match
+                                    if (results.length === 0) {
+                                        const linkRegex = /<a[^>]*class="result__url"[^>]*href="([^"]*)"[^>]*>/g;
+                                        const titleRegex = /<a[^>]*class="result__a"[^>]*>([^<]*)<\/a>/g;
+                                        const links = [];
+                                        const titles = [];
+                                        while ((match = linkRegex.exec(data)) !== null) {
+                                            links.push(match[1]);
+                                        }
+                                        while ((match = titleRegex.exec(data)) !== null) {
+                                            titles.push(match[1].trim());
+                                        }
+                                        for (let i = 0; i < Math.min(links.length, titles.length, maxResults); i++) {
+                                            results.push({ url: links[i], title: titles[i], snippet: '' });
+                                        }
+                                    }
+                                    if (results.length === 0) {
+                                        resolve(`No results found for: ${input.query}`);
+                                        return;
+                                    }
+                                    const output = results.map((r, i) => `${i + 1}. ${r.title}\n   URL: ${r.url}${r.snippet ? '\n   ' + r.snippet : ''}`).join('\n\n');
+                                    resolve(`Search results for "${input.query}":\n\n${output}`);
+                                }
+                                catch (e) {
+                                    resolve(`Error parsing search results: ${e}`);
+                                }
+                            });
+                        });
+                        req.on('error', (e) => {
+                            resolve(`Search error: ${e.message}`);
+                        });
+                        req.end();
+                    });
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
