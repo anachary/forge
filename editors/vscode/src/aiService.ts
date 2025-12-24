@@ -239,6 +239,30 @@ const AGENT_TOOLS = [
             },
             required: ['path']
         }
+    },
+    {
+        name: 'create_directory',
+        description: 'Create a new directory (including parent directories if needed).',
+        input_schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Path of the directory to create' }
+            },
+            required: ['path']
+        }
+    },
+    {
+        name: 'get_hover_info',
+        description: 'Get hover information (type info, documentation) for a symbol at a specific location.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Path to the file' },
+                line: { type: 'number', description: 'Line number (1-based)' },
+                character: { type: 'number', description: 'Character/column position (0-based)' }
+            },
+            required: ['path', 'line', 'character']
+        }
     }
 ];
 
@@ -986,6 +1010,50 @@ export class AIService {
 
                     fs.unlinkSync(filePath);
                     return `Successfully deleted ${input.path}`;
+                }
+                case 'create_directory': {
+                    const dirPath = path.join(workspacePath, input.path);
+
+                    if (fs.existsSync(dirPath)) {
+                        return `Directory already exists: ${input.path}`;
+                    }
+
+                    fs.mkdirSync(dirPath, { recursive: true });
+                    return `Successfully created directory: ${input.path}`;
+                }
+                case 'get_hover_info': {
+                    const filePath = path.join(workspacePath, input.path);
+                    if (!fs.existsSync(filePath)) {
+                        return `Error: File not found: ${input.path}`;
+                    }
+
+                    const uri = vscode.Uri.file(filePath);
+                    const position = new vscode.Position(input.line - 1, input.character);
+
+                    // Use VS Code's built-in hover provider
+                    const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+                        'vscode.executeHoverProvider',
+                        uri,
+                        position
+                    );
+
+                    if (!hovers || hovers.length === 0) {
+                        return `No hover information at ${input.path}:${input.line}:${input.character}`;
+                    }
+
+                    // Extract text from hover contents
+                    const contents: string[] = [];
+                    for (const hover of hovers) {
+                        for (const content of hover.contents) {
+                            if (typeof content === 'string') {
+                                contents.push(content);
+                            } else if ('value' in content) {
+                                contents.push(content.value);
+                            }
+                        }
+                    }
+
+                    return `Hover info at ${input.path}:${input.line}:${input.character}:\n\n${contents.join('\n\n')}`;
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
