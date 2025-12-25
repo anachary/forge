@@ -45,12 +45,28 @@ The Forge VS Code extension provides a Cursor/Windsurf-like experience right in 
 ### Features
 
 - **Chat Interface** - Natural conversation with your AI
-- **Agent Mode** - AI can execute tools to read/write files, run commands
+- **Agent Mode** - AI can execute 25 tools to read/write files, run commands, and more
 - **Tool Execution Cards** - See each action the AI takes in real-time
+- **Agent Summary Bar** - Shows files changed, files examined, and tools used (like Cursor/Windsurf)
 - **Logs Tab** - Detailed history of all tool executions
 - **Tasks Tab** - Track work items the AI is handling
 - **Edits Tab** - Review all file changes made by the AI
 - **Thread Management** - Multiple conversation threads with history
+
+### Agent Tools (25 total)
+
+| Category | Tools |
+|----------|-------|
+| **File Operations** | `read_file`, `write_file`, `list_files`, `rename_file`, `delete_file`, `create_directory` |
+| **Code Editing** | `apply_edit` (find & replace), `insert_text` (insert at line) |
+| **Code Intelligence** | `go_to_definition`, `find_references`, `get_file_symbols`, `get_hover_info`, `get_diagnostics` |
+| **Search** | `search_files` (text/regex across workspace) |
+| **Git** | `get_git_status`, `get_git_diff` |
+| **Terminal** | `run_command` (execute shell commands) |
+| **Web** | `web_search` (DuckDuckGo), `web_fetch` (fetch URL content) |
+| **Editor** | `open_file`, `get_open_files`, `show_message` |
+| **Workspace** | `get_workspace_info` |
+| **Task Tracking** | `add_task`, `update_task` |
 
 ## Quick Start
 
@@ -391,11 +407,17 @@ Response to User
 | DeepSeek Support | ✅ | ❌ | ❌ | ❌ |
 | Local LLM (Ollama) | ✅ | ❌ | ❌ | ❌ |
 | 100% Private Option | ✅ | ❌ | ❌ | ❌ |
+| Agent Tools | 25 | ~15 | ~15 | Limited |
+| Tool Execution UI | ✅ | ✅ | ✅ | ❌ |
+| Agent Summary Bar | ✅ | ✅ | ✅ | ❌ |
+| Code Intelligence | ✅ | ✅ | ✅ | ✅ |
 | Semantic Search | ✅ | ✅ | ✅ | Limited |
 | Call Graph | ✅ | ❌ | ❌ | ❌ |
 | Git Context | ✅ | Limited | Limited | ❌ |
-| Tool Execution UI | ✅ | ✅ | ✅ | ❌ |
+| Web Search | ✅ | ✅ | ✅ | ❌ |
+| Web Fetch | ✅ | ❌ | ❌ | ❌ |
 | Free | ✅* | Paid | Paid | Paid |
+| Open Source | ✅ | ❌ | ❌ | ❌ |
 
 *Free with Ollama (local). Cloud providers require API keys with usage-based pricing.
 
