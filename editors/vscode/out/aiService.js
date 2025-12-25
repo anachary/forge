@@ -235,6 +235,27 @@ const AGENT_TOOLS = [
             },
             required: ['path', 'line', 'character']
         }
+    },
+    {
+        name: 'open_file',
+        description: 'Open a file in the VS Code editor, optionally at a specific line.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Path to the file to open' },
+                line: { type: 'number', description: 'Optional line number to jump to (1-based)' }
+            },
+            required: ['path']
+        }
+    },
+    {
+        name: 'get_open_files',
+        description: 'Get a list of all currently open files in the editor.',
+        input_schema: {
+            type: 'object',
+            properties: {},
+            required: []
+        }
     }
 ];
 class AIService {
@@ -920,6 +941,36 @@ class AIService {
                         }
                     }
                     return `Hover info at ${input.path}:${input.line}:${input.character}:\n\n${contents.join('\n\n')}`;
+                }
+                case 'open_file': {
+                    const filePath = path.join(workspacePath, input.path);
+                    if (!fs.existsSync(filePath)) {
+                        return `Error: File not found: ${input.path}`;
+                    }
+                    const uri = vscode.Uri.file(filePath);
+                    const doc = await vscode.workspace.openTextDocument(uri);
+                    const editor = await vscode.window.showTextDocument(doc);
+                    // Jump to line if specified
+                    if (input.line) {
+                        const line = Math.max(0, input.line - 1);
+                        const position = new vscode.Position(line, 0);
+                        editor.selection = new vscode.Selection(position, position);
+                        editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+                    }
+                    return `Opened ${input.path}${input.line ? ` at line ${input.line}` : ''}`;
+                }
+                case 'get_open_files': {
+                    const openFiles = vscode.workspace.textDocuments
+                        .filter(doc => doc.uri.scheme === 'file')
+                        .map(doc => {
+                        const relativePath = vscode.workspace.asRelativePath(doc.uri);
+                        const isDirty = doc.isDirty ? ' (unsaved)' : '';
+                        return `${relativePath}${isDirty}`;
+                    });
+                    if (openFiles.length === 0) {
+                        return 'No files currently open.';
+                    }
+                    return `Open files (${openFiles.length}):\n${openFiles.join('\n')}`;
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
