@@ -331,6 +331,39 @@ const AGENT_TOOLS = [
             },
             required: ['path', 'line', 'text']
         }
+    },
+    {
+        name: 'web_fetch',
+        description: 'Fetch content from a URL and return it as text. Useful for reading documentation, APIs, etc.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                url: { type: 'string', description: 'The URL to fetch' },
+                maxLength: { type: 'number', description: 'Maximum characters to return (default: 10000)' }
+            },
+            required: ['url']
+        }
+    },
+    {
+        name: 'show_message',
+        description: 'Show a notification message to the user in VS Code.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                message: { type: 'string', description: 'The message to display' },
+                type: { type: 'string', enum: ['info', 'warning', 'error'], description: 'Message type (default: info)' }
+            },
+            required: ['message']
+        }
+    },
+    {
+        name: 'get_workspace_info',
+        description: 'Get information about the current workspace including root path, open folders, and git info.',
+        input_schema: {
+            type: 'object',
+            properties: {},
+            required: []
+        }
     }
 ];
 
@@ -1275,6 +1308,137 @@ export class AIService {
                     fs.writeFileSync(filePath, lines.join('\n'));
 
                     return `Successfully inserted text after line ${input.line} in ${input.path}`;
+                }
+                case 'web_fetch': {
+                    const https = await import('https');
+                    const http = await import('http');
+                    const maxLength = input.maxLength || 10000;
+
+                    return new Promise((resolve) => {
+                        const urlObj = new URL(input.url);
+                        const protocol = urlObj.protocol === 'https:' ? https : http;
+
+                        const req = protocol.request(input.url, {
+                            method: 'GET',
+                            headers: {
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                            },
+                            timeout: 30000
+                        }, (res) => {
+                            // Handle redirects
+                            if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                                resolve(`Redirect to: ${res.headers.location}`);
+                                return;
+                            }
+
+                            let data = '';
+                            res.on('data', (chunk: Buffer) => {
+                                data += chunk.toString();
+                                // Stop if we've exceeded max length
+                                if (data.length > maxLength * 2) {
+                                    req.destroy();
+                                }
+                            });
+                            res.on('end', () => {
+                                // Basic HTML to text conversion
+                                let text = data
+                                    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                                    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                                    .replace(/<[^>]+>/g, ' ')
+                                    .replace(/\s+/g, ' ')
+                                    .trim();
+
+                                if (text.length > maxLength) {
+                                    text = text.substring(0, maxLength) + '\n\n... (truncated)';
+                                }
+
+                                resolve(`Content from ${input.url}:\n\n${text}`);
+                            });
+                        });
+
+                        req.on('error', (e) => {
+                            resolve(`Error fetching URL: ${e.message}`);
+                        });
+
+                        req.on('timeout', () => {
+                            req.destroy();
+                            resolve('Error: Request timed out');
+                        });
+
+                        req.end();
+                    });
+                }
+                case 'show_message': {
+                    const messageType = input.type || 'info';
+
+                    switch (messageType) {
+                        case 'error':
+                            vscode.window.showErrorMessage(input.message);
+                            break;
+                        case 'warning':
+                            vscode.window.showWarningMessage(input.message);
+                            break;
+                        default:
+                            vscode.window.showInformationMessage(input.message);
+                    }
+
+                    return `Displayed ${messageType} message: "${input.message}"`;
+                }
+                case 'get_workspace_info': {
+                    const folders = vscode.workspace.workspaceFolders || [];
+                    const info: string[] = [];
+
+                    info.push(`Workspace Name: ${vscode.workspace.name || 'Untitled'}`);
+                    info.push(`Root Path: ${workspacePath}`);
+                    info.push(`Open Folders (${folders.length}):`);
+                    for (const folder of folders) {
+                        info.push(`  - ${folder.name}: ${folder.uri.fsPath}`);
+                    }
+
+                    // Get git info
+                    try {
+                        const { execSync } = await import('child_process');
+                        const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+                            cwd: workspacePath,
+                            encoding: 'utf-8',
+                            timeout: 5000
+                        }).trim();
+
+                        const remote = execSync('git remote get-url origin', {
+                            cwd: workspacePath,
+                            encoding: 'utf-8',
+                            timeout: 5000
+                        }).trim();
+
+                        const lastCommit = execSync('git log -1 --format="%h %s"', {
+                            cwd: workspacePath,
+                            encoding: 'utf-8',
+                            timeout: 5000
+                        }).trim();
+
+                        info.push(`\nGit Info:`);
+                        info.push(`  Branch: ${branch}`);
+                        info.push(`  Remote: ${remote}`);
+                        info.push(`  Last Commit: ${lastCommit}`);
+                    } catch (e) {
+                        info.push(`\nGit: Not a git repository or git not available`);
+                    }
+
+                    // Get some file stats
+                    try {
+                        const { execSync } = await import('child_process');
+                        const fileCount = execSync('git ls-files | wc -l', {
+                            cwd: workspacePath,
+                            encoding: 'utf-8',
+                            timeout: 10000,
+                            shell: 'cmd'
+                        }).trim();
+                        info.push(`  Tracked Files: ${fileCount}`);
+                    } catch (e) {
+                        // Ignore
+                    }
+
+                    return info.join('\n');
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
