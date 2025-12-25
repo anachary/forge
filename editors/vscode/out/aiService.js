@@ -277,6 +277,32 @@ const AGENT_TOOLS = [
             },
             required: []
         }
+    },
+    {
+        name: 'apply_edit',
+        description: 'Apply a precise text replacement in a file. More accurate than write_file for small edits.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Path to the file to edit' },
+                old_text: { type: 'string', description: 'Exact text to find and replace (must match exactly)' },
+                new_text: { type: 'string', description: 'New text to replace with' }
+            },
+            required: ['path', 'old_text', 'new_text']
+        }
+    },
+    {
+        name: 'insert_text',
+        description: 'Insert text at a specific line in a file.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Path to the file' },
+                line: { type: 'number', description: 'Line number after which to insert (0 = beginning of file)' },
+                text: { type: 'string', description: 'Text to insert' }
+            },
+            required: ['path', 'line', 'text']
+        }
     }
 ];
 class AIService {
@@ -1065,6 +1091,36 @@ class AIService {
                     catch (e) {
                         return `Error getting git diff: ${e.message}`;
                     }
+                }
+                case 'apply_edit': {
+                    const filePath = path.join(workspacePath, input.path);
+                    if (!fs.existsSync(filePath)) {
+                        return `Error: File not found: ${input.path}`;
+                    }
+                    const content = fs.readFileSync(filePath, 'utf-8');
+                    if (!content.includes(input.old_text)) {
+                        return `Error: Could not find the text to replace. Make sure old_text matches exactly.`;
+                    }
+                    // Check for multiple occurrences
+                    const occurrences = content.split(input.old_text).length - 1;
+                    if (occurrences > 1) {
+                        return `Error: Found ${occurrences} occurrences of the text. Please provide more context to make the match unique.`;
+                    }
+                    const newContent = content.replace(input.old_text, input.new_text);
+                    fs.writeFileSync(filePath, newContent);
+                    return `Successfully applied edit to ${input.path}`;
+                }
+                case 'insert_text': {
+                    const filePath = path.join(workspacePath, input.path);
+                    if (!fs.existsSync(filePath)) {
+                        return `Error: File not found: ${input.path}`;
+                    }
+                    const content = fs.readFileSync(filePath, 'utf-8');
+                    const lines = content.split('\n');
+                    const insertLine = Math.max(0, Math.min(input.line, lines.length));
+                    lines.splice(insertLine, 0, input.text);
+                    fs.writeFileSync(filePath, lines.join('\n'));
+                    return `Successfully inserted text after line ${input.line} in ${input.path}`;
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
