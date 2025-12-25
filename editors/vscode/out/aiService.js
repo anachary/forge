@@ -256,6 +256,27 @@ const AGENT_TOOLS = [
             properties: {},
             required: []
         }
+    },
+    {
+        name: 'get_git_status',
+        description: 'Get the current git status showing modified, staged, and untracked files.',
+        input_schema: {
+            type: 'object',
+            properties: {},
+            required: []
+        }
+    },
+    {
+        name: 'get_git_diff',
+        description: 'Get the git diff for a file or all changes.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Optional file path. If not provided, shows diff for all changes.' },
+                staged: { type: 'boolean', description: 'If true, show staged changes only (default: false)' }
+            },
+            required: []
+        }
     }
 ];
 class AIService {
@@ -971,6 +992,79 @@ class AIService {
                         return 'No files currently open.';
                     }
                     return `Open files (${openFiles.length}):\n${openFiles.join('\n')}`;
+                }
+                case 'get_git_status': {
+                    try {
+                        const { execSync } = await Promise.resolve().then(() => __importStar(require('child_process')));
+                        const result = execSync('git status --porcelain', {
+                            cwd: workspacePath,
+                            encoding: 'utf-8',
+                            timeout: 10000
+                        });
+                        if (!result.trim()) {
+                            return 'Working directory is clean. No changes to commit.';
+                        }
+                        // Parse porcelain format
+                        const lines = result.trim().split('\n');
+                        const staged = [];
+                        const modified = [];
+                        const untracked = [];
+                        for (const line of lines) {
+                            const index = line[0];
+                            const worktree = line[1];
+                            const file = line.substring(3);
+                            if (index === '?' && worktree === '?') {
+                                untracked.push(file);
+                            }
+                            else if (index !== ' ' && index !== '?') {
+                                staged.push(`${index} ${file}`);
+                            }
+                            if (worktree !== ' ' && worktree !== '?') {
+                                modified.push(`${worktree} ${file}`);
+                            }
+                        }
+                        let output = 'Git Status:\n';
+                        if (staged.length > 0) {
+                            output += `\nStaged (${staged.length}):\n${staged.map(f => '  ' + f).join('\n')}\n`;
+                        }
+                        if (modified.length > 0) {
+                            output += `\nModified (${modified.length}):\n${modified.map(f => '  ' + f).join('\n')}\n`;
+                        }
+                        if (untracked.length > 0) {
+                            output += `\nUntracked (${untracked.length}):\n${untracked.map(f => '  ' + f).join('\n')}\n`;
+                        }
+                        return output;
+                    }
+                    catch (e) {
+                        return `Error getting git status: ${e.message}`;
+                    }
+                }
+                case 'get_git_diff': {
+                    try {
+                        const { execSync } = await Promise.resolve().then(() => __importStar(require('child_process')));
+                        let cmd = 'git diff';
+                        if (input.staged) {
+                            cmd += ' --staged';
+                        }
+                        if (input.path) {
+                            cmd += ` -- "${input.path}"`;
+                        }
+                        const result = execSync(cmd, {
+                            cwd: workspacePath,
+                            encoding: 'utf-8',
+                            timeout: 30000,
+                            maxBuffer: 1024 * 1024 * 5 // 5MB
+                        });
+                        if (!result.trim()) {
+                            return input.staged
+                                ? 'No staged changes.'
+                                : 'No unstaged changes.';
+                        }
+                        return result;
+                    }
+                    catch (e) {
+                        return `Error getting git diff: ${e.message}`;
+                    }
                 }
                 default:
                     return `Error: Unknown tool: ${name}`;
