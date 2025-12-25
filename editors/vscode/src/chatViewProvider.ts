@@ -375,6 +375,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         .tool-status-icon.success { color: var(--vscode-testing-iconPassed); }
         .tool-status-icon.error { color: var(--vscode-errorForeground); }
         .tool-status-icon.running { color: var(--vscode-notificationsInfoIcon-foreground); }
+        /* Agent summary bar */
+        .agent-summary { display: flex; align-items: center; gap: 16px; padding: 8px 12px; margin: 8px 0 4px 0; background: var(--vscode-editor-inactiveSelectionBackground); border-radius: 6px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+        .agent-summary-item { display: flex; align-items: center; gap: 4px; }
+        .agent-summary-item .icon { opacity: 0.8; }
+        .agent-summary-divider { width: 1px; height: 14px; background: var(--vscode-panel-border); }
         pre { background: var(--vscode-textCodeBlock-background); padding: 8px; border-radius: 4px; overflow-x: auto; margin: 6px 0; font-size: 12px; }
         code { font-family: var(--vscode-editor-font-family); }
         #input-area { padding: 10px; border-top: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); }
@@ -1142,6 +1147,54 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         clearLogs(); // Initialize
 
+        // Agent metrics tracking
+        let agentMetrics = { filesChanged: new Set(), filesExamined: new Set(), toolsUsed: 0 };
+
+        function resetAgentMetrics() {
+            agentMetrics = { filesChanged: new Set(), filesExamined: new Set(), toolsUsed: 0 };
+        }
+
+        function trackToolUsage(toolName, toolInput, isEnd) {
+            if (isEnd) {
+                agentMetrics.toolsUsed++;
+            }
+            // Track file operations
+            const path = toolInput?.path || toolInput?.directory;
+            if (path) {
+                if (['read_file', 'list_files', 'search_files', 'get_file_symbols', 'find_references', 'go_to_definition', 'get_hover_info', 'get_diagnostics'].includes(toolName)) {
+                    agentMetrics.filesExamined.add(path);
+                }
+                if (['write_file', 'apply_edit', 'insert_text', 'rename_file', 'delete_file', 'create_directory'].includes(toolName)) {
+                    agentMetrics.filesChanged.add(path);
+                }
+            }
+        }
+
+        function createAgentSummary() {
+            const filesChanged = agentMetrics.filesChanged.size;
+            const filesExamined = agentMetrics.filesExamined.size;
+            const toolsUsed = agentMetrics.toolsUsed;
+
+            if (toolsUsed === 0) return null;
+
+            const summary = document.createElement('div');
+            summary.className = 'agent-summary';
+
+            let html = '';
+            if (filesChanged > 0) {
+                html += '<div class="agent-summary-item"><span class="icon">📝</span>' + filesChanged + ' File' + (filesChanged > 1 ? 's' : '') + ' Changed</div>';
+            }
+            if (filesExamined > 0) {
+                if (html) html += '<div class="agent-summary-divider"></div>';
+                html += '<div class="agent-summary-item"><span class="icon">🔍</span>' + filesExamined + ' File' + (filesExamined > 1 ? 's' : '') + ' Examined</div>';
+            }
+            if (html) html += '<div class="agent-summary-divider"></div>';
+            html += '<div class="agent-summary-item"><span class="icon">🔧</span>' + toolsUsed + ' Tool' + (toolsUsed > 1 ? 's' : '') + ' Used</div>';
+
+            summary.innerHTML = html;
+            return summary;
+        }
+
         // Tool cards in chat - Augment style
         const activeToolCards = {};
 
@@ -1224,6 +1277,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 case 'systemMessage': addMsg(m.message, 'system'); break;
                 case 'startAiMessage':
                     isStreaming = true; send.disabled = true;
+                    resetAgentMetrics();
                     currentAiMsg = addMsg('', 'ai streaming');
                     break;
                 case 'streamChunk':
@@ -1231,14 +1285,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'endAiMessage':
                     if (currentAiMsg) { currentAiMsg.classList.remove('streaming'); currentAiMsg = null; }
+                    // Add agent summary bar if tools were used
+                    const summary = createAgentSummary();
+                    if (summary) {
+                        chat.appendChild(summary);
+                        chat.scrollTop = chat.scrollHeight;
+                    }
                     isStreaming = false; send.disabled = false;
                     break;
                 case 'toolStart':
                     addLog('tool-start', m.tool);
+                    trackToolUsage(m.tool.name, m.tool.input, false);
                     addToolCard(m.tool, 'running');
                     break;
                 case 'toolEnd':
                     addLog('tool-end', m.tool);
+                    trackToolUsage(m.tool.name, m.tool.input, true);
                     updateToolCard(m.tool);
                     break;
                 case 'logInfo':
