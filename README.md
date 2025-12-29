@@ -106,6 +106,118 @@ forge search "authentication logic"
 forge mcp
 ```
 
+## Auto-Indexing
+
+Forge automatically indexes new codebases on first use. **No manual setup required!**
+
+### How It Works
+
+When you open a codebase with Forge:
+
+1. **First Run** 📦
+   - Forge detects it's a new codebase
+   - Automatically indexes all Python files
+   - Saves metadata in `.forge/index_metadata.json`
+   - Takes 10-30 seconds depending on codebase size
+
+2. **Subsequent Runs** ⚡
+   - Detects cached index exists
+   - Checks if files have changed
+   - If no changes: Uses cached index (instant)
+   - If changes detected: Re-indexes automatically
+
+3. **Change Detection** 🔄
+   - Tracks file count
+   - Monitors last modified timestamps
+   - Only re-indexes when needed
+
+### Usage
+
+**Old way (manual):**
+```python
+from forge.agent import ForgeAgent
+
+agent = ForgeAgent("/path/to/codebase")
+agent.initialize()  # Manual call needed
+response = agent.chat("What does this code do?")
+```
+
+**New way (automatic):**
+```python
+from forge.agent import ForgeAgent
+
+agent = ForgeAgent("/path/to/codebase")  # Auto-indexes if needed
+response = agent.chat("What does this code do?")
+```
+
+### Cache Location
+
+Indexing metadata is stored in `.forge/` directory:
+
+```
+your-codebase/
+├── .forge/
+│   ├── index_cache              # Marks indexed status
+│   └── index_metadata.json      # File count, timestamps
+└── (your source code)
+```
+
+**In `.gitignore`:**
+Add `.forge/` to prevent committing cache files.
+
+### Cache Content
+
+`index_metadata.json` tracks:
+```json
+{
+  "file_count": 127,
+  "last_modified": 1703830500.245,
+  "indexed_at": "2024-12-28T10:15:30.123456",
+  "workspace": "/path/to/codebase"
+}
+```
+
+### Force Re-Index
+
+If you need to force a full re-index:
+
+```python
+from forge.agent import ForgeAgent
+
+agent = ForgeAgent("/path/to/codebase")
+agent.initialize(force=True)  # Re-indexes even if cached
+```
+
+Or via CLI:
+
+```bash
+forge index --force
+```
+
+### Performance
+
+| Scenario | Time | Cached? |
+|----------|------|---------|
+| First run (new codebase) | 10-30s | No |
+| Subsequent uses (no changes) | <100ms | Yes ✅ |
+| Force re-index | 10-30s | No |
+| Large codebase (10K+ files) | 30-120s | After first run |
+
+### What Gets Indexed
+
+- ✅ Python files (`.py`)
+- ✅ Code structure (functions, classes)
+- ✅ Semantic embeddings
+- ✅ Call graph analysis
+- ✅ Recent git history
+
+### What Gets Cached
+
+- ✅ Vector embeddings
+- ✅ Code chunks
+- ✅ Call graph
+- ✅ File metadata
+
 ## Architecture
 
 ```

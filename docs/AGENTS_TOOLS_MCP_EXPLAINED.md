@@ -34,6 +34,87 @@ USER sees answer in VS Code
 
 ---
 
+## Part 0: Getting Started - Auto-Indexing
+
+**NEW**: Forge automatically indexes your codebase on first use!
+
+### How It Works
+
+When you create a ForgeAgent instance:
+
+```python
+from forge.agent import ForgeAgent
+
+agent = ForgeAgent("/path/to/codebase")  # Auto-indexes if needed
+response = agent.chat("What does this code do?")
+```
+
+**Execution Path**:
+1. `forge/agent/forge_agent.py::class ForgeAgent::def __init__()` 
+   - Creates agent instance
+   - Calls `self._auto_initialize()`
+
+2. `forge/agent/forge_agent.py::def _auto_initialize()`
+   - Checks if `.forge/index_cache` exists
+   - If NOT exists → calls `self.initialize()` (first time)
+   - If EXISTS → calls `self._has_codebase_changed()`
+
+3. `forge/agent/forge_agent.py::def _has_codebase_changed()`
+   - Reads `.forge/index_metadata.json`
+   - Compares file count and modification times
+   - Returns True if changed, False if unchanged
+
+4. Based on result:
+   - **New codebase**: Auto-indexes (10-30 seconds)
+   - **No changes**: Reuses cache (instant ⚡)
+   - **Changed**: Re-indexes automatically
+
+### Output Examples
+
+**First time:**
+```
+📦 New codebase detected: forge
+   Indexing for the first time...
+Initializing Forge...
+  Indexing codebase...
+✅ Ready!
+```
+
+**Subsequent runs (no changes):**
+```
+✅ Using cached index for forge
+```
+
+**After adding files:**
+```
+🔄 Codebase changed, re-indexing forge...
+   (Files: 45 → 47)
+✅ Ready!
+```
+
+### Cache Location
+
+```
+your-codebase/
+└── .forge/
+    ├── index_cache              # Status marker
+    ├── index_metadata.json      # File count, timestamps
+    └── (index data)
+```
+
+### Key Files
+
+- **Implementation**: [`forge/agent/forge_agent.py`](../forge/agent/forge_agent.py#L68-L199)
+  - Lines 68-85: `__init__()` with auto-init call
+  - Lines 103-133: `_auto_initialize()` logic
+  - Lines 135-165: `_has_codebase_changed()` detection
+  - Lines 167-199: `_save_index_metadata()` persistence
+
+- **Full Documentation**: [`AUTO_INDEXING.md`](AUTO_INDEXING.md)
+- **Quick Reference**: [`AUTO_INDEXING_QUICK_REFERENCE.md`](AUTO_INDEXING_QUICK_REFERENCE.md)
+
+---
+
 ## Part 1: What is an AGENT?
 
 ### Simple Definition
