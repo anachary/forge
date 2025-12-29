@@ -214,10 +214,42 @@ class ChatViewProvider {
         }, async () => {
             try {
                 let lastRefresh = Date.now();
-                await this._aiService.sendMessageStream(message, true, (chunk, done) => {
+                // Event callback for rich events (tool status, logs)
+                const onEvent = (event) => {
+                    if (event.type === 'tool_start' && event.tool) {
+                        this._view?.webview.postMessage({
+                            type: 'toolStart',
+                            tool: { name: event.tool.name, input: event.tool.input }
+                        });
+                    }
+                    else if (event.type === 'tool_end' && event.tool) {
+                        this._view?.webview.postMessage({
+                            type: 'toolEnd',
+                            tool: {
+                                name: event.tool.name,
+                                result: event.tool.result,
+                                success: event.tool.success,
+                                duration: event.tool.duration
+                            }
+                        });
+                        // Refresh tasks/edits after tool execution
+                        this._sendThreads();
+                    }
+                    else if (event.type === 'log') {
+                        this._view?.webview.postMessage({
+                            type: 'logInfo',
+                            message: event.content
+                        });
+                    }
+                    else if (event.type === 'text' && event.content) {
+                        this._view?.webview.postMessage({ type: 'streamChunk', chunk: event.content });
+                    }
+                };
+                // Chunk callback for done signal
+                const onChunk = (chunk, done) => {
                     if (chunk) {
                         this._view?.webview.postMessage({ type: 'streamChunk', chunk });
-                        // Refresh tasks/edits periodically during tool execution
+                        // Refresh tasks/edits periodically
                         if (Date.now() - lastRefresh > 500) {
                             this._sendThreads();
                             lastRefresh = Date.now();
@@ -225,10 +257,10 @@ class ChatViewProvider {
                     }
                     if (done) {
                         this._view?.webview.postMessage({ type: 'endAiMessage' });
-                        // Refresh tasks and edits after AI response
                         this._sendThreads();
                     }
-                });
+                };
+                await this._aiService.sendMessageStreamWithEvents(message, true, onEvent, onChunk);
             }
             catch (error) {
                 this._view?.webview.postMessage({
@@ -281,6 +313,8 @@ class ChatViewProvider {
                 claudeModel: config.get('claudeModel', 'claude-sonnet-4-20250514'),
                 openaiApiKey: config.get('openaiApiKey', ''),
                 openaiModel: config.get('openaiModel', 'gpt-4o'),
+                deepseekApiKey: config.get('deepseekApiKey', ''),
+                deepseekModel: config.get('deepseekModel', 'deepseek-chat'),
                 ollamaUrl: config.get('ollamaUrl', 'http://localhost:11434'),
                 ollamaModel: config.get('ollamaModel', 'qwen2.5-coder:7b')
             },
@@ -297,9 +331,11 @@ class ChatViewProvider {
             await config.update('claudeModel', settings.claudeModel || 'claude-sonnet-4-20250514', vscode.ConfigurationTarget.Global);
             await config.update('openaiApiKey', settings.openaiApiKey || '', vscode.ConfigurationTarget.Global);
             await config.update('openaiModel', settings.openaiModel || 'gpt-4o', vscode.ConfigurationTarget.Global);
+            await config.update('deepseekApiKey', settings.deepseekApiKey || '', vscode.ConfigurationTarget.Global);
+            await config.update('deepseekModel', settings.deepseekModel || 'deepseek-chat', vscode.ConfigurationTarget.Global);
             await config.update('ollamaUrl', settings.ollamaUrl || 'http://localhost:11434', vscode.ConfigurationTarget.Global);
             await config.update('ollamaModel', settings.ollamaModel || 'qwen2.5-coder:7b', vscode.ConfigurationTarget.Global);
-            const providerName = settings.provider === 'claude' ? 'Claude' : settings.provider === 'openai' ? 'OpenAI' : 'Ollama';
+            const providerName = settings.provider === 'claude' ? 'Claude' : settings.provider === 'openai' ? 'OpenAI' : settings.provider === 'deepseek' ? 'DeepSeek' : 'Ollama';
             this._view?.webview.postMessage({ type: 'settingsSaved', success: true, provider: settings.provider });
             this._view?.webview.postMessage({ type: 'systemMessage', message: `Settings saved. Using ${providerName}` });
         }
@@ -329,6 +365,24 @@ class ChatViewProvider {
         .system { background: var(--vscode-editorInfo-background); font-size: 11px; padding: 6px 10px; opacity: 0.8; text-align: center; align-self: center; border-radius: 4px; }
         .streaming { border-left: 2px solid var(--vscode-progressBar-background); animation: pulse 1s infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        /* Tool call cards - Augment style */
+        .tool-call { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin: 4px 0; background: var(--vscode-editor-inactiveSelectionBackground); border-radius: 6px; font-size: 12px; border-left: 3px solid var(--vscode-notificationsInfoIcon-foreground); }
+        .tool-call.success { border-left-color: var(--vscode-testing-iconPassed); }
+        .tool-call.error { border-left-color: var(--vscode-errorForeground); }
+        .tool-call.running { animation: pulse 1s infinite; }
+        .tool-icon { font-size: 14px; opacity: 0.8; }
+        .tool-name { font-weight: 500; color: var(--vscode-foreground); }
+        .tool-detail { opacity: 0.7; margin-left: 4px; font-family: monospace; font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .tool-status { margin-left: auto; font-size: 10px; opacity: 0.6; }
+        .tool-status-icon { margin-left: auto; }
+        .tool-status-icon.success { color: var(--vscode-testing-iconPassed); }
+        .tool-status-icon.error { color: var(--vscode-errorForeground); }
+        .tool-status-icon.running { color: var(--vscode-notificationsInfoIcon-foreground); }
+        /* Agent summary bar */
+        .agent-summary { display: flex; align-items: center; gap: 16px; padding: 8px 12px; margin: 8px 0 4px 0; background: var(--vscode-editor-inactiveSelectionBackground); border-radius: 6px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+        .agent-summary-item { display: flex; align-items: center; gap: 4px; }
+        .agent-summary-item .icon { opacity: 0.8; }
+        .agent-summary-divider { width: 1px; height: 14px; background: var(--vscode-panel-border); }
         pre { background: var(--vscode-textCodeBlock-background); padding: 8px; border-radius: 4px; overflow-x: auto; margin: 6px 0; font-size: 12px; }
         code { font-family: var(--vscode-editor-font-family); }
         #input-area { padding: 10px; border-top: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); }
@@ -441,6 +495,20 @@ class ChatViewProvider {
         .diff-add { color: var(--vscode-testing-iconPassed); }
         .diff-del { color: var(--vscode-errorForeground); }
         .no-edits { opacity: 0.5; font-size: 12px; padding: 20px; text-align: center; }
+        /* Logs pane */
+        #logs-pane { padding: 8px; }
+        #logs-list { font-family: monospace; font-size: 11px; }
+        .log-entry { padding: 4px 8px; border-radius: 3px; margin: 2px 0; }
+        .log-entry.tool-start { background: var(--vscode-editorInfo-background); border-left: 3px solid var(--vscode-notificationsInfoIcon-foreground); }
+        .log-entry.tool-end { background: var(--vscode-editor-inactiveSelectionBackground); }
+        .log-entry.tool-end.success { border-left: 3px solid var(--vscode-testing-iconPassed); }
+        .log-entry.tool-end.error { border-left: 3px solid var(--vscode-errorForeground); }
+        .log-entry.info { opacity: 0.7; }
+        .log-time { opacity: 0.5; margin-right: 8px; }
+        .log-tool { font-weight: bold; color: var(--vscode-textLink-foreground); }
+        .log-result { margin-left: 16px; opacity: 0.8; white-space: pre-wrap; max-height: 100px; overflow-y: auto; }
+        .log-clear-btn { padding: 4px 8px; font-size: 11px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; border-radius: 3px; cursor: pointer; margin-bottom: 8px; }
+        .no-logs { opacity: 0.5; font-size: 12px; padding: 20px; text-align: center; }
         /* Image drop zone */
         #image-drop-zone { border: 2px dashed var(--vscode-panel-border); border-radius: 8px; padding: 20px; text-align: center; margin: 8px 12px; background: var(--vscode-input-background); }
         #image-drop-zone.active { border-color: var(--vscode-button-background); background: var(--vscode-button-background); opacity: 0.3; }
@@ -476,6 +544,7 @@ class ChatViewProvider {
         <button class="top-tab active" data-tab="chat">Thread</button>
         <button class="top-tab" data-tab="tasks">Tasks <span class="tab-badge" id="tasks-count"></span></button>
         <button class="top-tab" data-tab="edits">Edits <span class="tab-badge" id="edits-stats"></span></button>
+        <button class="top-tab" data-tab="logs">Logs</button>
     </div>
     <div id="tab-content">
         <div id="chat-pane" class="tab-pane active">
@@ -486,6 +555,9 @@ class ChatViewProvider {
         </div>
         <div id="edits-pane" class="tab-pane">
             <div id="edits-list"></div>
+        </div>
+        <div id="logs-pane" class="tab-pane">
+            <div id="logs-list"></div>
         </div>
     </div>
     <div id="input-area">
@@ -525,9 +597,10 @@ class ChatViewProvider {
                 <select id="s-provider">
                     <option value="claude">Claude</option>
                     <option value="openai">OpenAI</option>
+                    <option value="deepseek">DeepSeek</option>
                     <option value="ollama">Ollama (local)</option>
                 </select>
-                <small>Claude/OpenAI are cloud. Ollama is local fallback.</small>
+                <small>Claude/OpenAI/DeepSeek are cloud. Ollama is local fallback.</small>
             </div>
 
             <div class="provider-section" id="claude-settings">
@@ -561,6 +634,22 @@ class ChatViewProvider {
                         <option value="gpt-4o-mini">gpt-4o-mini</option>
                         <option value="gpt-4-turbo">gpt-4-turbo</option>
                         <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="provider-section hidden" id="deepseek-settings">
+                <h4>DeepSeek</h4>
+                <div class="setting-group">
+                    <label>API Key</label>
+                    <input type="password" id="s-deepseek-key" placeholder="sk-...">
+                    <small>platform.deepseek.com</small>
+                </div>
+                <div class="setting-group">
+                    <label>Model</label>
+                    <select id="s-deepseek-model">
+                        <option value="deepseek-chat">deepseek-chat</option>
+                        <option value="deepseek-coder">deepseek-coder</option>
                     </select>
                 </div>
             </div>
@@ -951,6 +1040,7 @@ class ChatViewProvider {
             const p = e.target.value;
             document.getElementById('claude-settings').classList.toggle('hidden', p !== 'claude');
             document.getElementById('openai-settings').classList.toggle('hidden', p !== 'openai');
+            document.getElementById('deepseek-settings').classList.toggle('hidden', p !== 'deepseek');
             document.getElementById('ollama-settings').classList.toggle('hidden', p !== 'ollama');
             if (p === 'ollama') {
                 vscode.postMessage({ type: 'fetchOllamaModels' });
@@ -970,6 +1060,8 @@ class ChatViewProvider {
                 claudeModel: document.getElementById('s-claude-model').value,
                 openaiApiKey: document.getElementById('s-openai-key').value,
                 openaiModel: document.getElementById('s-openai-model').value,
+                deepseekApiKey: document.getElementById('s-deepseek-key').value,
+                deepseekModel: document.getElementById('s-deepseek-model').value,
                 ollamaUrl: document.getElementById('s-ollama-url').value,
                 ollamaModel: document.getElementById('s-ollama-model').value
             };
@@ -1008,6 +1100,162 @@ class ChatViewProvider {
             return div;
         }
 
+        // Logs functionality
+        const logsList = document.getElementById('logs-list');
+        function addLog(type, data) {
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry ' + type;
+
+            if (type === 'tool-start') {
+                entry.innerHTML = '<span class="log-time">' + time + '</span><span class="log-tool">⚡ ' +
+                    getToolDisplayName(data.name) + '</span>';
+                if (data.input) {
+                    entry.innerHTML += '<div class="log-result">' + JSON.stringify(data.input, null, 2) + '</div>';
+                }
+            } else if (type === 'tool-end') {
+                entry.classList.add(data.success ? 'success' : 'error');
+                const icon = data.success ? '✓' : '✗';
+                entry.innerHTML = '<span class="log-time">' + time + '</span><span class="log-tool">' + icon + ' ' +
+                    getToolDisplayName(data.name) + '</span> <span style="opacity:0.6">(' + data.duration + 'ms)</span>';
+                if (data.result) {
+                    const shortResult = data.result.length > 300 ? data.result.substring(0, 300) + '...' : data.result;
+                    entry.innerHTML += '<div class="log-result">' + escapeHtml(shortResult) + '</div>';
+                }
+            } else if (type === 'info') {
+                entry.innerHTML = '<span class="log-time">' + time + '</span>' + escapeHtml(data);
+            }
+
+            logsList.appendChild(entry);
+            logsList.scrollTop = logsList.scrollHeight;
+        }
+
+        function getToolDisplayName(name) {
+            const names = {
+                'read_file': 'Reading file',
+                'write_file': 'Writing file',
+                'list_files': 'Listing files',
+                'add_task': 'Creating task',
+                'update_task': 'Updating task'
+            };
+            return names[name] || name;
+        }
+
+        function escapeHtml(text) {
+            return String(text).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function clearLogs() {
+            logsList.innerHTML = '<div class="no-logs">No logs yet. Logs will appear here when agent mode is used.</div>';
+        }
+        clearLogs(); // Initialize
+
+        // Agent metrics tracking
+        let agentMetrics = { filesChanged: new Set(), filesExamined: new Set(), toolsUsed: 0 };
+
+        function resetAgentMetrics() {
+            agentMetrics = { filesChanged: new Set(), filesExamined: new Set(), toolsUsed: 0 };
+        }
+
+        function trackToolUsage(toolName, toolInput, isEnd) {
+            if (isEnd) {
+                agentMetrics.toolsUsed++;
+            }
+            // Track file operations
+            const path = toolInput?.path || toolInput?.directory;
+            if (path) {
+                if (['read_file', 'list_files', 'search_files', 'get_file_symbols', 'find_references', 'go_to_definition', 'get_hover_info', 'get_diagnostics'].includes(toolName)) {
+                    agentMetrics.filesExamined.add(path);
+                }
+                if (['write_file', 'apply_edit', 'insert_text', 'rename_file', 'delete_file', 'create_directory'].includes(toolName)) {
+                    agentMetrics.filesChanged.add(path);
+                }
+            }
+        }
+
+        function createAgentSummary() {
+            const filesChanged = agentMetrics.filesChanged.size;
+            const filesExamined = agentMetrics.filesExamined.size;
+            const toolsUsed = agentMetrics.toolsUsed;
+
+            if (toolsUsed === 0) return null;
+
+            const summary = document.createElement('div');
+            summary.className = 'agent-summary';
+
+            let html = '';
+            if (filesChanged > 0) {
+                html += '<div class="agent-summary-item"><span class="icon">📝</span>' + filesChanged + ' File' + (filesChanged > 1 ? 's' : '') + ' Changed</div>';
+            }
+            if (filesExamined > 0) {
+                if (html) html += '<div class="agent-summary-divider"></div>';
+                html += '<div class="agent-summary-item"><span class="icon">🔍</span>' + filesExamined + ' File' + (filesExamined > 1 ? 's' : '') + ' Examined</div>';
+            }
+            if (html) html += '<div class="agent-summary-divider"></div>';
+            html += '<div class="agent-summary-item"><span class="icon">🔧</span>' + toolsUsed + ' Tool' + (toolsUsed > 1 ? 's' : '') + ' Used</div>';
+
+            summary.innerHTML = html;
+            return summary;
+        }
+
+        // Tool cards in chat - Augment style
+        const activeToolCards = {};
+
+        function getToolIcon(name) {
+            const icons = {
+                'read_file': '📄',
+                'write_file': '✏️',
+                'list_files': '📁',
+                'add_task': '✅',
+                'update_task': '📋'
+            };
+            return icons[name] || '⚡';
+        }
+
+        function getToolLabel(name, input) {
+            if (name === 'read_file') return 'Read ' + (input?.path || 'file');
+            if (name === 'write_file') return 'Write ' + (input?.path || 'file');
+            if (name === 'list_files') return 'List ' + (input?.directory || 'files');
+            if (name === 'add_task') return 'Add Task';
+            if (name === 'update_task') return 'Update Task';
+            return name;
+        }
+
+        function addToolCard(tool, status) {
+            const card = document.createElement('div');
+            card.className = 'tool-call ' + status;
+            card.id = 'tool-' + tool.name + '-' + Date.now();
+
+            const icon = getToolIcon(tool.name);
+            const label = getToolLabel(tool.name, tool.input);
+            const detail = tool.input?.path || tool.input?.directory || tool.input?.description || '';
+
+            card.innerHTML =
+                '<span class="tool-icon">' + icon + '</span>' +
+                '<span class="tool-name">' + label + '</span>' +
+                (detail ? '<span class="tool-detail">' + escapeHtml(detail) + '</span>' : '') +
+                '<span class="tool-status-icon running">⏳</span>';
+
+            chat.appendChild(card);
+            chat.scrollTop = chat.scrollHeight;
+            activeToolCards[tool.name] = card;
+        }
+
+        function updateToolCard(tool) {
+            const card = activeToolCards[tool.name];
+            if (card) {
+                card.classList.remove('running');
+                card.classList.add(tool.success ? 'success' : 'error');
+                const statusIcon = card.querySelector('.tool-status-icon');
+                if (statusIcon) {
+                    statusIcon.classList.remove('running');
+                    statusIcon.classList.add(tool.success ? 'success' : 'error');
+                    statusIcon.textContent = tool.success ? '●' : '✗';
+                }
+                delete activeToolCards[tool.name];
+            }
+        }
+
         function formatText(text) {
             return text
                 .replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -1032,6 +1280,7 @@ class ChatViewProvider {
                 case 'systemMessage': addMsg(m.message, 'system'); break;
                 case 'startAiMessage':
                     isStreaming = true; send.disabled = true;
+                    resetAgentMetrics();
                     currentAiMsg = addMsg('', 'ai streaming');
                     break;
                 case 'streamChunk':
@@ -1039,9 +1288,28 @@ class ChatViewProvider {
                     break;
                 case 'endAiMessage':
                     if (currentAiMsg) { currentAiMsg.classList.remove('streaming'); currentAiMsg = null; }
+                    // Add agent summary bar if tools were used
+                    const summary = createAgentSummary();
+                    if (summary) {
+                        chat.appendChild(summary);
+                        chat.scrollTop = chat.scrollHeight;
+                    }
                     isStreaming = false; send.disabled = false;
                     break;
-                case 'clearChat': chat.innerHTML = ''; break;
+                case 'toolStart':
+                    addLog('tool-start', m.tool);
+                    trackToolUsage(m.tool.name, m.tool.input, false);
+                    addToolCard(m.tool, 'running');
+                    break;
+                case 'toolEnd':
+                    addLog('tool-end', m.tool);
+                    trackToolUsage(m.tool.name, m.tool.input, true);
+                    updateToolCard(m.tool);
+                    break;
+                case 'logInfo':
+                    addLog('info', m.message);
+                    break;
+                case 'clearChat': chat.innerHTML = ''; clearLogs(); break;
                 case 'settings':
                     currentSettings = m.settings;
                     document.getElementById('s-provider').value = m.settings.provider;
@@ -1049,16 +1317,20 @@ class ChatViewProvider {
                     document.getElementById('s-claude-model').value = m.settings.claudeModel;
                     document.getElementById('s-openai-key').value = m.settings.openaiApiKey || '';
                     document.getElementById('s-openai-model').value = m.settings.openaiModel;
+                    document.getElementById('s-deepseek-key').value = m.settings.deepseekApiKey || '';
+                    document.getElementById('s-deepseek-model').value = m.settings.deepseekModel;
                     document.getElementById('s-ollama-url').value = m.settings.ollamaUrl;
                     document.getElementById('s-ollama-model').value = m.settings.ollamaModel;
                     document.getElementById('claude-settings').classList.toggle('hidden', m.settings.provider !== 'claude');
                     document.getElementById('openai-settings').classList.toggle('hidden', m.settings.provider !== 'openai');
+                    document.getElementById('deepseek-settings').classList.toggle('hidden', m.settings.provider !== 'deepseek');
                     document.getElementById('ollama-settings').classList.toggle('hidden', m.settings.provider !== 'ollama');
                     updateProviderBadge(m.settings.provider);
                     // Update provider info in bottom bar
-                    const providerNames = { claude: 'Claude', openai: 'OpenAI', ollama: 'Ollama' };
+                    const providerNames = { claude: 'Claude', openai: 'OpenAI', deepseek: 'DeepSeek', ollama: 'Ollama' };
                     const model = m.settings.provider === 'claude' ? m.settings.claudeModel :
-                                  m.settings.provider === 'openai' ? m.settings.openaiModel : m.settings.ollamaModel;
+                                  m.settings.provider === 'openai' ? m.settings.openaiModel :
+                                  m.settings.provider === 'deepseek' ? m.settings.deepseekModel : m.settings.ollamaModel;
                     document.getElementById('provider-info').textContent = providerNames[m.settings.provider] + ' - ' + model;
                     // Update tool support indicator
                     const toolWarning = document.getElementById('tool-warning');
