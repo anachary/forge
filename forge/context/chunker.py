@@ -69,6 +69,7 @@ class SemanticChunker:
     def __init__(self, chunk_size: int = 512, overlap: int = 50):
         self.chunk_size = chunk_size
         self.overlap = overlap
+        self._warned_treesitter = False
     
     def chunk_file(self, file_path: str) -> List[CodeChunk]:
         """Chunk a file into semantic units."""
@@ -88,6 +89,9 @@ class SemanticChunker:
         if HAS_TREESITTER and language:
             return self._chunk_with_ast(content, file_path, language)
         else:
+            if not HAS_TREESITTER and language and not self._warned_treesitter:
+                print("⚠️  tree-sitter-languages not installed - using naive chunking. Run: pip install tree-sitter-languages")
+                self._warned_treesitter = True
             return self._chunk_naive(content, file_path)
     
     def _chunk_with_ast(self, content: str, file_path: str, language: str) -> List[CodeChunk]:

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(code:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)"
+    ]
+  }
+}

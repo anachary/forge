@@ -73,10 +73,11 @@ Defines what information helps vs hurts AI performance for different query types
    - Configurable chunk size and overlap
 
 2. **Embedder** - Dense vector embeddings
-   - Uses Ollama for embedding generation
+   - Default: sentence-transformers (`all-MiniLM-L6-v2`, 384 dims, local)
+   - Alternative: Ollama (`nomic-embed-text`, 768 dims, requires server)
    - Maps text to high-dimensional semantic space
    - Semantically similar code → nearby vectors
-   - Dimension detection and batch processing
+   - Dimension detection and native batch processing
 
 3. **CallGraph** - Interprocedural analysis
    - Function/method call relationships

@@ -12,7 +12,7 @@ Forge is a powerful AI coding agent for VS Code that supports **Claude**, **Open
 - **Agentic Coding** - AI can read, write, and modify files autonomously
 - **Tool Execution UI** - Visual feedback for AI actions (like Cursor/Windsurf)
 - **Task & Edit Tracking** - See what the AI is working on and what it changed
-- **Deep Context** - Semantic code search with embeddings
+- **Deep Context** - Semantic code search with local embeddings (sentence-transformers)
 - **Call Graph Analysis** - Understands code relationships
 - **Git History** - Leverages version control context
 - **Web Search** - DuckDuckGo integration (no API key)
@@ -27,20 +27,23 @@ The Forge VS Code extension provides a Cursor/Windsurf-like experience right in 
 
 | Provider | Type | Best For |
 |----------|------|----------|
+| **Ollama** (default) | Local | Privacy, offline use, free, no API key needed |
 | **Claude** | Cloud | Best code understanding & generation |
 | **OpenAI** | Cloud | GPT-4o, fast responses |
 | **DeepSeek** | Cloud | Cost-effective, great for code |
-| **Ollama** | Local | Privacy, offline use, free |
 
 ### Installation
 
 1. Install the extension from the VS Code marketplace (or build from source)
 2. Open the Forge panel in the sidebar
-3. Configure your preferred AI provider in settings:
-   - **Claude**: Add your Anthropic API key
-   - **OpenAI**: Add your OpenAI API key
-   - **DeepSeek**: Add your DeepSeek API key
-   - **Ollama**: Just works locally (install [Ollama](https://ollama.ai) first)
+3. **Works immediately with Ollama** (default provider, no API key needed)
+   - Install [Ollama](https://ollama.ai) and run `ollama serve`
+   - The extension defaults to Ollama — just start chatting
+4. To use a cloud provider instead, open Settings in the Forge panel:
+   - **Claude**: Enter your Anthropic API key
+   - **OpenAI**: Enter your OpenAI API key
+   - **DeepSeek**: Enter your DeepSeek API key
+   - API key validation ensures you won't save without a key for cloud providers
 
 ### Features
 
@@ -72,8 +75,8 @@ The Forge VS Code extension provides a Cursor/Windsurf-like experience right in 
 
 ### Prerequisites
 
-1. **Ollama** - Install from [ollama.ai](https://ollama.ai)
-2. **Python 3.10+**
+1. **Python 3.10+**
+2. **Ollama** - Install from [ollama.ai](https://ollama.ai) for local LLM inference (default provider)
 
 ### Installation
 
@@ -82,13 +85,14 @@ The Forge VS Code extension provides a Cursor/Windsurf-like experience right in 
 git clone https://github.com/forge-ai/forge.git
 cd forge
 
-# Install dependencies
+# Install dependencies (includes sentence-transformers for local embeddings)
 pip install -e .
 
-# Pull required models
+# Pull the default model for Ollama (default provider)
 ollama pull qwen2.5-coder:7b
-ollama pull nomic-embed-text
 ```
+
+Embeddings work out of the box using `sentence-transformers` (model: `all-MiniLM-L6-v2`) -- no Ollama needed for indexing and search.
 
 ### Usage
 
@@ -105,6 +109,120 @@ forge search "authentication logic"
 # Run as MCP server
 forge mcp
 ```
+
+## Auto-Indexing
+
+Forge automatically indexes new codebases on first use. **No manual setup required!**
+
+### How It Works
+
+When you open a codebase with Forge:
+
+1. **First Run** 📦
+   - Forge detects it's a new codebase
+   - Automatically indexes all Python files
+   - Saves metadata in `.forge/index_metadata.json`
+   - Takes 10-30 seconds depending on codebase size
+
+2. **Subsequent Runs** ⚡
+   - Detects cached index exists
+   - Checks if files have changed
+   - If no changes: Uses cached index (instant)
+   - If changes detected: Re-indexes automatically
+
+3. **Change Detection** 🔄
+   - Tracks file count
+   - Monitors last modified timestamps
+   - Detects embedding provider changes (auto-clears incompatible vectors)
+   - Only re-indexes when needed
+
+### Usage
+
+**Old way (manual):**
+```python
+from forge.agent import ForgeAgent
+
+agent = ForgeAgent("/path/to/codebase")
+agent.initialize()  # Manual call needed
+response = agent.chat("What does this code do?")
+```
+
+**New way (automatic):**
+```python
+from forge.agent import ForgeAgent
+
+agent = ForgeAgent("/path/to/codebase")  # Auto-indexes if needed
+response = agent.chat("What does this code do?")
+```
+
+### Cache Location
+
+Indexing metadata is stored in `.forge/` directory:
+
+```
+your-codebase/
+├── .forge/
+│   ├── index_cache              # Marks indexed status
+│   └── index_metadata.json      # File count, timestamps
+└── (your source code)
+```
+
+**In `.gitignore`:**
+Add `.forge/` to prevent committing cache files.
+
+### Cache Content
+
+`index_metadata.json` tracks:
+```json
+{
+  "file_count": 127,
+  "last_modified": 1703830500.245,
+  "indexed_at": "2024-12-28T10:15:30.123456",
+  "workspace": "/path/to/codebase",
+  "embedding_provider": "sentence-transformers"
+}
+```
+
+### Force Re-Index
+
+If you need to force a full re-index:
+
+```python
+from forge.agent import ForgeAgent
+
+agent = ForgeAgent("/path/to/codebase")
+agent.initialize(force=True)  # Re-indexes even if cached
+```
+
+Or via CLI:
+
+```bash
+forge index --force
+```
+
+### Performance
+
+| Scenario | Time | Cached? |
+|----------|------|---------|
+| First run (new codebase) | 10-30s | No |
+| Subsequent uses (no changes) | <100ms | Yes ✅ |
+| Force re-index | 10-30s | No |
+| Large codebase (10K+ files) | 30-120s | After first run |
+
+### What Gets Indexed
+
+- ✅ Python files (`.py`)
+- ✅ Code structure (functions, classes)
+- ✅ Semantic embeddings
+- ✅ Call graph analysis
+- ✅ Recent git history
+
+### What Gets Cached
+
+- ✅ Vector embeddings
+- ✅ Code chunks
+- ✅ Call graph
+- ✅ File metadata
 
 ## Architecture
 
@@ -126,7 +244,7 @@ forge mcp
 │                    │  │                                 │   │   │
 │  ┌──────────────┐  │  │  ┌─────────┐    ┌──────────┐   │   │   │
 │  │  Semantic    │◀─┼──┼──│ Embedder│───▶│ LanceDB  │   │   │   │
-│  │  Chunker     │  │  │  │ (Ollama)│    │ (Vector) │   │   │   │
+│  │  Chunker     │  │  │  │ (local) │    │ (Vector) │   │   │   │
 │  └──────────────┘  │  │  └─────────┘    └──────────┘   │   │   │
 │        │           │  │                                 │   │   │
 │        ▼           │  │  ┌─────────┐    ┌──────────┐   │   │   │
@@ -145,8 +263,8 @@ forge mcp
 │                                          │                      │
 │                                          ▼                      │
 │                    ┌─────────────────────────────────────────┐  │
-│                    │              LLM (Ollama)               │  │
-│                    │         qwen2.5-coder / llama3          │  │
+│                    │        LLM (Ollama / Claude / OpenAI)    │  │
+│                    │       qwen2.5-coder / claude / gpt-4o    │  │
 │                    └─────────────────────────────────────────┘  │
 │                                          │                      │
 │                                          ▼                      │
@@ -165,7 +283,7 @@ Instead of relying solely on the LLM's training data, Forge retrieves relevant c
 
 **How it works:**
 1. Code is chunked at semantic boundaries (functions, classes)
-2. Each chunk is embedded into a vector using `nomic-embed-text`
+2. Each chunk is embedded into a vector using `all-MiniLM-L6-v2` (sentence-transformers, local) or `nomic-embed-text` (Ollama)
 3. Vectors are stored in LanceDB (local vector database)
 4. User queries are embedded and matched against stored vectors
 5. Top matches are included in the LLM prompt
@@ -195,10 +313,14 @@ Code is split at meaningful boundaries using AST parsing, not arbitrary characte
 
 Text is converted to dense vectors where semantic similarity = vector proximity.
 
-**Model:** `nomic-embed-text` via Ollama
-- 768 dimensions
-- Trained on code and text
-- Runs locally
+**Default Model:** `all-MiniLM-L6-v2` via sentence-transformers
+- 384 dimensions
+- Fast, good quality for code and text
+- Runs locally, no server required
+
+**Alternative:** `nomic-embed-text` via Ollama (768 dimensions, requires Ollama server)
+
+Set via `--embedding-provider ollama` or `FORGE_EMBEDDING_PROVIDER=ollama`.
 
 **Reference:**
 > Reimers, N., & Gurevych, I. (2019). *Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks*.
@@ -274,7 +396,7 @@ forge/
 │   ├── cli.py              # Command line interface
 │   │
 │   ├── context/            # Context Engine
-│   │   ├── embedder.py     # Ollama embeddings
+│   │   ├── embedder.py     # Embeddings (sentence-transformers / Ollama)
 │   │   ├── chunker.py      # Semantic code chunking
 │   │   ├── vector_store.py # LanceDB storage
 │   │   ├── call_graph.py   # Static analysis
@@ -304,11 +426,13 @@ forge/
 Configuration is managed via environment variables or `~/.forge/config.json`:
 
 ```python
-# Default configuration
+# Default configuration (Ollama is the default provider — works out of the box)
 ForgeConfig(
+    provider="ollama",                          # LLM provider: ollama (default) | claude | openai | deepseek
+    embedding_provider="sentence-transformers", # Embedding provider: sentence-transformers | ollama
     ollama_url="http://localhost:11434",
     model="qwen2.5-coder:7b",
-    embedding_model="nomic-embed-text",
+    embedding_model="nomic-embed-text",         # Auto-selected per provider if not set
     max_context_tokens=4000,
     temperature=0.7,
     enable_web_search=True,
@@ -317,12 +441,16 @@ ForgeConfig(
 )
 ```
 
+**Note:** Both the CLI (`forge/config.py`) and the VS Code extension (`package.json`) default to Ollama. Cloud providers (Claude, OpenAI, DeepSeek) require an API key — the extension validates that a key is provided before saving settings.
+
 ### Environment Variables
 
 ```bash
+FORGE_PROVIDER=ollama                           # LLM provider
+FORGE_EMBEDDING_PROVIDER=sentence-transformers  # Embedding provider (default)
 FORGE_OLLAMA_URL=http://localhost:11434
 FORGE_MODEL=qwen2.5-coder:7b
-FORGE_EMBEDDING_MODEL=nomic-embed-text
+FORGE_EMBED_MODEL=nomic-embed-text              # Override embedding model
 ```
 
 ## MCP Integration
@@ -385,7 +513,7 @@ User Query: "How does the auth middleware work?"
     ▼
 ┌─────────────────────────────────────┐
 │ 4. LLM Generation                   │
-│    Ollama → qwen2.5-coder:7b        │
+│    LLM Provider → selected model     │
 └─────────────────────────────────────┘
     │
     ▼
@@ -432,6 +560,7 @@ Contributions welcome! Please read CONTRIBUTING.md for guidelines.
 ## Acknowledgments
 
 Built on the shoulders of giants:
+- [sentence-transformers](https://www.sbert.net) - Local embedding models (default)
 - [Ollama](https://ollama.ai) - Local LLM runtime
 - [LanceDB](https://lancedb.com) - Embedded vector database
 - [Tree-sitter](https://tree-sitter.github.io) - Code parsing

@@ -43,8 +43,8 @@
         │  ┌──────────────────────────────────────┐ │
         │  │ 1. Query Embedding                  │ │
         │  │    Input: Natural language query    │ │
-        │  │    Model: nomic-embed-text          │ │
-        │  │    Output: Vector [768 dims]        │ │
+        │  │    Model: all-MiniLM-L6-v2 (default) │ │
+        │  │    Output: Vector [384 dims]        │ │
         │  └──────────────────────────────────────┘ │
         │                   │                       │
         │  ┌────────────────▼────────────────────┐ │
@@ -544,7 +544,7 @@ TIME: 100ms
 ├─ Semantic indexing starts
 
 TIME: 150ms
-├─ Query embedding generated (768 dims)
+├─ Query embedding generated (384 dims, sentence-transformers)
 ├─ Vector search initiated
 
 TIME: 500ms
@@ -582,14 +582,14 @@ TIME: 1150ms
 ├─ Ready for LLM
 
 TIME: 1160ms
-├─ Request sent to Ollama
-│  POST /api/generate
+├─ Request sent to LLM provider
+│  (Ollama/Claude/OpenAI)
 │  stream: true
 │  temperature: 0.7
 │  max_tokens: 615
 
 TIME: 1180ms
-├─ Ollama receives request
+├─ LLM receives request
 ├─ Model loading (if needed)
 ├─ LLM processing starts
 

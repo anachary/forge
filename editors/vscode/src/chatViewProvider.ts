@@ -164,7 +164,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private async _checkHealthWithUI() {
         const health = await this._aiService.checkHealth();
         const config = vscode.workspace.getConfiguration('forge');
-        const provider = config.get<string>('provider', 'claude');
+        const provider = config.get<string>('provider', 'ollama');
 
         if (health.status) {
             const fallback = provider !== 'ollama' ? ' (Ollama fallback available)' : '';
@@ -302,7 +302,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this._view?.webview.postMessage({
             type: 'settings',
             settings: {
-                provider: config.get('provider', 'claude'),
+                provider: config.get('provider', 'ollama'),
                 claudeApiKey: config.get('claudeApiKey', ''),
                 claudeModel: config.get('claudeModel', 'claude-sonnet-4-20250514'),
                 openaiApiKey: config.get('openaiApiKey', ''),
@@ -600,7 +600,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 <small>Claude/OpenAI/DeepSeek are cloud. Ollama is local fallback.</small>
             </div>
 
-            <div class="provider-section" id="claude-settings">
+            <div class="provider-section hidden" id="claude-settings">
                 <h4>Claude</h4>
                 <div class="setting-group">
                     <label>API Key</label>
@@ -651,7 +651,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 </div>
             </div>
 
-            <div class="provider-section hidden" id="ollama-settings">
+            <div class="provider-section" id="ollama-settings">
                 <h4>Ollama</h4>
                 <div class="setting-group">
                     <label>URL</label>
@@ -1051,8 +1051,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // Save settings
         document.getElementById('save-settings').addEventListener('click', () => {
+            const p = document.getElementById('s-provider').value;
+            // Validate API key is set for cloud providers
+            if (p === 'claude' && !document.getElementById('s-claude-key').value.trim()) {
+                addMsg('Claude API key is required', 'system');
+                return;
+            }
+            if (p === 'openai' && !document.getElementById('s-openai-key').value.trim()) {
+                addMsg('OpenAI API key is required', 'system');
+                return;
+            }
+            if (p === 'deepseek' && !document.getElementById('s-deepseek-key').value.trim()) {
+                addMsg('DeepSeek API key is required', 'system');
+                return;
+            }
             const settings = {
-                provider: document.getElementById('s-provider').value,
+                provider: p,
                 claudeApiKey: document.getElementById('s-claude-key').value,
                 claudeModel: document.getElementById('s-claude-model').value,
                 openaiApiKey: document.getElementById('s-openai-key').value,
@@ -1350,6 +1364,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         settingsPanel.classList.remove('open');
                         addMsg('Settings saved', 'system');
                         updateProviderBadge(document.getElementById('s-provider').value);
+                        vscode.postMessage({ type: 'getSettings' }); // Re-fetch to refresh toolSupport
                     } else {
                         addMsg('Failed to save: ' + m.error, 'system');
                     }

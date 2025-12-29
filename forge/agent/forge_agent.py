@@ -83,22 +83,37 @@ class ForgeAgent:
     
     def initialize(self, force: bool = False):
         """Initialize the agent (index codebase, build call graph).
-        
+
         Args:
             force: If True, re-index even if cached index exists
         """
         if self._initialized and not force:
             return
-        
+
+        # Check dependencies before indexing
+        from forge.config import check_dependencies
+        deps = check_dependencies()
+        missing = {k for k, (installed, _) in deps.items() if not installed}
+        if missing:
+            print("⚠️  Cannot index codebase - install missing dependencies first")
+            return
+
         print("Initializing Forge...")
         print("  Indexing codebase...")
         self.retriever.index(force=force)
-        
-        # Save index metadata for change detection
-        self._save_index_metadata()
-        
-        self._initialized = True
-        print("✅ Ready!")
+
+        # Only save cache if indexing actually stored data
+        chunk_count = self.retriever.vector_store.count()
+        if chunk_count > 0:
+            self._save_index_metadata()
+            self._initialized = True
+            print(f"✅ Ready! ({chunk_count} chunks indexed)")
+        else:
+            print("⚠️  Indexing produced no results - cache NOT saved")
+            if config.embedding_provider == "ollama":
+                print("   Check that Ollama is running: ollama serve")
+            else:
+                print(f"   Check embedding provider: {config.embedding_provider}")
     
     def _auto_initialize(self):
         """Auto-initialize agent when workspace is opened.
@@ -131,39 +146,49 @@ class ForgeAgent:
     
     def _has_codebase_changed(self) -> bool:
         """Check if codebase has changed since last index.
-        
+
         Compares:
         - Number of Python files
         - Last modified timestamps
-        
+        - Embedding provider (different providers produce incompatible vectors)
+
         Returns:
             True if codebase has changed, False otherwise
         """
         try:
             cache_meta = self.workspace / ".forge" / "index_metadata.json"
-            
+
             if not cache_meta.exists():
                 return True
-            
+
+            # Get cached file stats
+            cached_meta = json.loads(cache_meta.read_text())
+
+            # Check if embedding provider changed (vectors would be incompatible)
+            cached_provider = cached_meta.get("embedding_provider", "ollama")
+            if cached_provider != config.embedding_provider:
+                print(f"   Embedding provider changed: {cached_provider} → {config.embedding_provider}")
+                # Clear stale vectors with wrong dimensions
+                self.retriever.vector_store.clear()
+                return True
+
             # Get current file stats
             current_files = list(self.workspace.rglob("*.py"))
             current_count = len(current_files)
             current_mtime = max(
-                (f.stat().st_mtime for f in current_files), 
+                (f.stat().st_mtime for f in current_files),
                 default=0
             )
-            
-            # Get cached file stats
-            cached_meta = json.loads(cache_meta.read_text())
+
             cached_count = cached_meta.get("file_count", 0)
             cached_mtime = cached_meta.get("last_modified", 0)
-            
+
             # If file count changed or modification time changed, re-index
             changed = current_count != cached_count or current_mtime > cached_mtime
-            
+
             if changed:
                 print(f"   (Files: {cached_count} → {current_count})")
-            
+
             return changed
         except Exception:
             # If we can't determine, be safe and don't re-index
@@ -195,11 +220,12 @@ class ForgeAgent:
             metadata = {
                 "file_count": len(current_files),
                 "last_modified": max(
-                    (f.stat().st_mtime for f in current_files), 
+                    (f.stat().st_mtime for f in current_files),
                     default=0
                 ),
                 "indexed_at": datetime.now().isoformat(),
-                "workspace": str(self.workspace)
+                "workspace": str(self.workspace),
+                "embedding_provider": config.embedding_provider,
             }
             
             # Save metadata

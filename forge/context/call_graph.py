@@ -89,9 +89,14 @@ class CallGraph:
         skip_dirs = {"node_modules", ".git", "__pycache__", "venv", ".venv", "dist", "build"}
         return any(part in skip_dirs for part in path.parts)
     
+    _warned_treesitter = False
+
     def _analyze_file(self, file_path: str):
         """Analyze a single file for symbols and calls."""
         if not HAS_TREESITTER:
+            if not CallGraph._warned_treesitter:
+                print("⚠️  tree-sitter-languages not installed - call graph analysis disabled. Run: pip install tree-sitter-languages")
+                CallGraph._warned_treesitter = True
             return
         
         path = Path(file_path)

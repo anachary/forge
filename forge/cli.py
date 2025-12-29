@@ -17,13 +17,43 @@ from forge.agent import ForgeAgent
 from forge.mcp import MCPServer
 
 
+def _apply_embedding_provider(args):
+    """Apply --embedding-provider override to global config."""
+    ep = getattr(args, "embedding_provider", None)
+    if ep:
+        config.embedding_provider = ep
+
+
 def cmd_chat(args):
     """Interactive chat mode."""
+    # Apply CLI overrides to global config before creating the agent
+    _apply_embedding_provider(args)
+    if args.provider:
+        config.provider = args.provider
+    if args.api_key:
+        if config.provider == "claude":
+            config.anthropic_api_key = args.api_key
+        elif config.provider == "openai":
+            config.openai_api_key = args.api_key
+    if args.model:
+        if config.provider == "claude":
+            config.claude_model = args.model
+        elif config.provider == "openai":
+            config.openai_model = args.model
+        else:
+            config.model = args.model
+
     workspace = args.workspace or str(Path.cwd())
     agent = ForgeAgent(workspace)
     
-    print("Forge - Local AI Coding Agent")
-    print("Deep context. Full autonomy. Zero cloud.")
+    provider_label = config.provider.capitalize()
+    model_label = (
+        config.claude_model if config.provider == "claude"
+        else config.openai_model if config.provider == "openai"
+        else config.model
+    )
+    print("Forge - AI Coding Agent")
+    print(f"Provider: {provider_label}  Model: {model_label}  Embeddings: {config.embedding_provider}")
     print("-" * 40)
     print("Type 'exit' to quit, 'clear' to reset history")
     print()
@@ -64,6 +94,7 @@ def cmd_chat(args):
 
 def cmd_index(args):
     """Index the codebase."""
+    _apply_embedding_provider(args)
     workspace = args.workspace or str(Path.cwd())
     agent = ForgeAgent(workspace)
     agent.initialize(force=args.force)
@@ -72,6 +103,7 @@ def cmd_index(args):
 
 def cmd_search(args):
     """Search the codebase."""
+    _apply_embedding_provider(args)
     workspace = args.workspace or str(Path.cwd())
     agent = ForgeAgent(workspace)
     agent.initialize()
@@ -97,12 +129,24 @@ def main():
         "-w", "--workspace",
         help="Workspace directory (default: current directory)",
     )
+    parser.add_argument(
+        "--embedding-provider",
+        choices=["sentence-transformers", "ollama"],
+        default=None,
+        help="Embedding provider (default: from FORGE_EMBEDDING_PROVIDER or 'sentence-transformers')",
+    )
     
     subparsers = parser.add_subparsers(dest="command", help="Commands")
     
     # chat command
     chat_parser = subparsers.add_parser("chat", help="Interactive chat mode")
     chat_parser.add_argument("--stream", action="store_true", help="Stream responses")
+    chat_parser.add_argument("--provider", choices=["ollama", "claude", "openai"], default=None,
+                             help="LLM provider (default: from FORGE_PROVIDER or 'ollama')")
+    chat_parser.add_argument("--api-key", default=None,
+                             help="API key for the chosen provider")
+    chat_parser.add_argument("--model", default=None,
+                             help="Model name to use (overrides provider default)")
     chat_parser.set_defaults(func=cmd_chat)
     
     # index command
@@ -125,6 +169,11 @@ def main():
     if args.command is None:
         # Default to chat
         args.stream = False
+        args.provider = None
+        args.api_key = None
+        args.model = None
+        if not hasattr(args, "embedding_provider"):
+            args.embedding_provider = None
         cmd_chat(args)
     else:
         args.func(args)

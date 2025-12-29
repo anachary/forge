@@ -15,7 +15,7 @@ from pathlib import Path
 from forge.tools.file_tools import FileTools
 from forge.tools.terminal import Terminal
 from forge.tools.web_search import WebSearch
-from forge.context.retriever import ContextRetriever
+from forge.context.enhanced_retriever import EnhancedContextRetriever
 
 
 class MCPServer:
@@ -40,7 +40,7 @@ class MCPServer:
         self.files = FileTools(workspace)
         self.terminal = Terminal(workspace)
         self.web = WebSearch()
-        self.retriever = ContextRetriever(workspace)
+        self.retriever = EnhancedContextRetriever(workspace)
     
     def get_tools(self) -> List[Dict[str, Any]]:
         """Return tool definitions in MCP format."""

@@ -62,7 +62,10 @@ class VectorStore:
     
     def add_chunks(self, chunks: List[CodeChunk], embeddings: List[List[float]]) -> int:
         """Add code chunks with their embeddings to the store."""
-        if not HAS_LANCEDB or not chunks or not embeddings:
+        if not HAS_LANCEDB:
+            print("⚠️  lancedb not installed - cannot store code chunks. Run: pip install lancedb")
+            return 0
+        if not chunks or not embeddings:
             return 0
         
         data = []
@@ -95,7 +98,11 @@ class VectorStore:
     
     def search(self, query_embedding: List[float], limit: int = 10) -> List[SearchResult]:
         """Search for similar code chunks."""
-        if not HAS_LANCEDB or not query_embedding:
+        if not HAS_LANCEDB:
+            print("⚠️  lancedb not installed - cannot search. Run: pip install lancedb")
+            return []
+        if not query_embedding:
+            print("⚠️  Empty query embedding - cannot search (check embedding provider)")
             return []
         
         try:
@@ -127,7 +134,9 @@ class VectorStore:
     
     def count(self) -> int:
         """Get number of chunks in store."""
-        if not HAS_LANCEDB or self.TABLE_NAME not in self.db.table_names():
+        if not HAS_LANCEDB:
+            return 0
+        if self.TABLE_NAME not in self.db.table_names():
             return 0
         try:
             table = self.db.open_table(self.TABLE_NAME)

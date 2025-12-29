@@ -55,8 +55,8 @@ COMPLETE_FLOW = """
 4. SEMANTIC INDEXING & RETRIEVAL (Step 2)
    ├─ Query Embedding
    │  ├─ Input: "How do I fix the authentication bug?"
-   │  ├─ Model: nomic-embed-text (via Ollama)
-   │  ├─ Output: Vector [0.2, -0.5, 0.8, ..., 0.1] (768 dimensions)
+   │  ├─ Model: all-MiniLM-L6-v2 (sentence-transformers, default) or nomic-embed-text (Ollama)
+   │  ├─ Output: Vector [0.2, -0.5, 0.8, ..., 0.1] (384 or 768 dimensions)
    │  └─ Storage: Cached for reuse
    │
    ├─ Vector Search
@@ -152,7 +152,7 @@ COMPLETE_FLOW = """
    │  ├─ Model: qwen2.5-coder:7b (or other local model)
    │  ├─ Temperature: 0.7
    │  ├─ Max tokens: 615
-   │  └─ Via: Ollama HTTP API
+   │  └─ Via: Ollama HTTP API (or Claude/OpenAI API)
    │
    ├─ Generation Process
    │  ├─ Reasoning: Model analyzes context (internal)
@@ -192,13 +192,13 @@ COMPLETE_FLOW = """
 LOCAL_LLM_ANALYSIS = """
 ✅ CURRENT COMPATIBILITY: YES, WORKS WITH LOCAL LLMS
 
-The system is DESIGNED for local LLMs via Ollama:
+The system is DESIGNED for local operation:
 
 1. EMBEDDING MODEL (Already configured)
-   ├─ Model: nomic-embed-text
-   ├─ Provider: Ollama (local)
-   ├─ API: /api/embeddings endpoint
-   ├─ Advantages: Fast, offline, no API keys
+   ├─ Default: all-MiniLM-L6-v2 (sentence-transformers, 384 dims)
+   ├─ Alternative: nomic-embed-text (Ollama, 768 dims)
+   ├─ Provider: sentence-transformers (local, no server needed)
+   ├─ Advantages: Fast, offline, no API keys, no Ollama dependency
    └─ Status: ✓ Ready
 
 2. LLM MODEL (Already configured)
@@ -982,7 +982,8 @@ local_llm_config = {
     'enabled': True,
     'provider': 'ollama',
     'base_url': 'http://localhost:11434',
-    'embedding_model': 'nomic-embed-text',
+    'embedding_provider': 'sentence-transformers',  # or 'ollama'
+    'embedding_model': 'all-MiniLM-L6-v2',  # auto-selected per provider
     'models': {
         'primary': 'qwen2.5-coder:7b',
         'fallback': 'llama2:7b',

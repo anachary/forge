@@ -80,20 +80,37 @@ class ContextRetriever:
                 all_chunks.extend(chunks)
         
         if not all_chunks:
+            print("⚠️  No code chunks found to index")
             return
-        
+
+        # Check embedder connectivity before proceeding
+        if not self.embedder.check_connection():
+            provider = self.embedder.provider
+            if provider == "ollama":
+                print("⚠️  Cannot connect to Ollama for embeddings - index will be empty")
+                print(f"   Make sure Ollama is running at {self.embedder.base_url}")
+                print(f"   Run: ollama serve && ollama pull {self.embedder.model}")
+            else:
+                print(f"⚠️  Embedding provider '{provider}' is not available - index will be empty")
+                print(f"   Run: pip install {provider}")
+            return
+
         # Generate embeddings and store
         texts = [c.content for c in all_chunks]
         embeddings = self.embedder.embed_batch(texts)
-        
+
         added = self.vector_store.add_chunks(all_chunks, embeddings)
         print(f"Indexed {added} code chunks")
-        
+
+        if added == 0:
+            print("⚠️  No chunks were stored - check embedding provider status")
+            return
+
         # Build call graph
         if config.enable_call_graph:
             self.call_graph.build(force=force)
             print(f"Built call graph: {len(self.call_graph.symbols)} symbols")
-        
+
         self._indexed = True
     
     def _should_skip(self, path: Path) -> bool:

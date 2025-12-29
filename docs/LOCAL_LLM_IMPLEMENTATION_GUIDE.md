@@ -29,7 +29,7 @@ llm = LLM(
 retriever = EnhancedContextRetriever(
     workspace="/path/to/project",
     llm=llm,
-    embedder_model="nomic-embed-text"  # Local embeddings
+    embedder_model="all-MiniLM-L6-v2"  # Local embeddings (sentence-transformers default)
 )
 
 context = retriever.retrieve("How do I fix the bug?")
@@ -38,8 +38,8 @@ response = llm.generate(context)
 
 ### B. Why It Works
 
-1. **Vector Embeddings:** Uses Ollama's embedding models (nomic-embed-text)
-2. **No API Keys:** Ollama runs locally, no authentication needed
+1. **Vector Embeddings:** Uses sentence-transformers (default, no server) or Ollama embedding models
+2. **No API Keys:** Embeddings run locally, no authentication needed
 3. **Token Budgeting:** System handles variable context windows (4K-200K+ tokens)
 4. **Streaming:** Built-in streaming support for real-time responses
 5. **Configuration-Driven:** All settings via `config.py`

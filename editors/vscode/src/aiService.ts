@@ -1451,7 +1451,7 @@ export class AIService {
     private getConfig() {
         const config = vscode.workspace.getConfiguration('forge');
         return {
-            provider: config.get<Provider>('provider', 'claude'),
+            provider: config.get<Provider>('provider', 'ollama'),
             claudeApiKey: config.get<string>('claudeApiKey', ''),
             openaiApiKey: config.get<string>('openaiApiKey', ''),
             deepseekApiKey: config.get<string>('deepseekApiKey', ''),

@@ -36,10 +36,11 @@
   
 - [x] Embedder (forge/context/embedder.py)
   - [x] Dense vector embeddings
-  - [x] Uses Ollama API
-  - [x] Batch processing
+  - [x] Provider dispatch: sentence-transformers (default) or Ollama
+  - [x] Native batch processing (sentence-transformers)
   - [x] embed() and embed_batch() methods
   - [x] Dimension detection
+  - [x] Lazy model loading
   
 - [x] CallGraph (forge/context/call_graph.py)
   - [x] Interprocedural analysis
