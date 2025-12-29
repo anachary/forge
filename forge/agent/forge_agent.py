@@ -77,9 +77,16 @@ class ForgeAgent:
         # State
         self.history: List[Message] = []
         self._initialized = False
+        
+        # Auto-initialize when workspace opens
+        self._auto_initialize()
     
     def initialize(self, force: bool = False):
-        """Initialize the agent (index codebase, build call graph)."""
+        """Initialize the agent (index codebase, build call graph).
+        
+        Args:
+            force: If True, re-index even if cached index exists
+        """
         if self._initialized and not force:
             return
         
@@ -87,8 +94,120 @@ class ForgeAgent:
         print("  Indexing codebase...")
         self.retriever.index(force=force)
         
+        # Save index metadata for change detection
+        self._save_index_metadata()
+        
         self._initialized = True
-        print("Ready!")
+        print("✅ Ready!")
+    
+    def _auto_initialize(self):
+        """Auto-initialize agent when workspace is opened.
+        
+        Checks if codebase has been indexed before:
+        - If not indexed: Index now (first time)
+        - If already indexed: Skip (reuse cached index)
+        - If codebase changed: Re-index automatically
+        """
+        try:
+            # Check if we have a cached index for this workspace
+            cache_path = self.workspace / ".forge" / "index_cache"
+            index_exists = cache_path.exists()
+            
+            if not index_exists:
+                print(f"📦 New codebase detected: {self.workspace.name}")
+                print("   Indexing for the first time...")
+                self.initialize(force=False)
+            else:
+                # Check if codebase has changed since last index
+                if self._has_codebase_changed():
+                    print(f"🔄 Codebase changed, re-indexing {self.workspace.name}...")
+                    self.initialize(force=True)
+                else:
+                    print(f"✅ Using cached index for {self.workspace.name}")
+                    self._initialized = True
+        except Exception as e:
+            print(f"⚠️  Auto-initialization warning: {e}")
+            print("   You can manually call agent.initialize()")
+    
+    def _has_codebase_changed(self) -> bool:
+        """Check if codebase has changed since last index.
+        
+        Compares:
+        - Number of Python files
+        - Last modified timestamps
+        
+        Returns:
+            True if codebase has changed, False otherwise
+        """
+        try:
+            cache_meta = self.workspace / ".forge" / "index_metadata.json"
+            
+            if not cache_meta.exists():
+                return True
+            
+            # Get current file stats
+            current_files = list(self.workspace.rglob("*.py"))
+            current_count = len(current_files)
+            current_mtime = max(
+                (f.stat().st_mtime for f in current_files), 
+                default=0
+            )
+            
+            # Get cached file stats
+            cached_meta = json.loads(cache_meta.read_text())
+            cached_count = cached_meta.get("file_count", 0)
+            cached_mtime = cached_meta.get("last_modified", 0)
+            
+            # If file count changed or modification time changed, re-index
+            changed = current_count != cached_count or current_mtime > cached_mtime
+            
+            if changed:
+                print(f"   (Files: {cached_count} → {current_count})")
+            
+            return changed
+        except Exception:
+            # If we can't determine, be safe and don't re-index
+            return False
+    
+    def _save_index_metadata(self):
+        """Save index metadata for change detection.
+        
+        Stores:
+        - Number of Python files
+        - Last modification timestamp
+        - Index creation time
+        - Workspace path
+        """
+        try:
+            from datetime import datetime
+            
+            # Create .forge directory
+            forge_dir = self.workspace / ".forge"
+            forge_dir.mkdir(exist_ok=True)
+            
+            # Create empty index_cache file to mark indexed status
+            cache_file = forge_dir / "index_cache"
+            cache_file.touch()
+            
+            # Get current file stats
+            current_files = list(self.workspace.rglob("*.py"))
+            
+            metadata = {
+                "file_count": len(current_files),
+                "last_modified": max(
+                    (f.stat().st_mtime for f in current_files), 
+                    default=0
+                ),
+                "indexed_at": datetime.now().isoformat(),
+                "workspace": str(self.workspace)
+            }
+            
+            # Save metadata
+            meta_file = forge_dir / "index_metadata.json"
+            meta_file.write_text(json.dumps(metadata, indent=2))
+            
+        except Exception as e:
+            print(f"⚠️  Could not save index metadata: {e}")
     
     def chat(self, message: str) -> str:
         """Process a chat message and return response."""
