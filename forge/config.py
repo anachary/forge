@@ -24,6 +24,22 @@ class ForgeConfig:
     chunk_size: int = 512
     chunk_overlap: int = 50
     
+    # Context Engineering (Playbook Implementation)
+    # Step 1: Context Boundaries
+    context_scoping_enabled: bool = True
+    
+    # Step 4: Query Complexity Routing
+    complexity_routing_enabled: bool = True
+    
+    # Step 5: Context Window Optimization
+    context_window_optimization_enabled: bool = True
+    
+    # Security
+    security_filtering_enabled: bool = True
+    
+    # Quality Metrics
+    quality_metrics_enabled: bool = True
+    
     # Workspace
     workspace: Optional[Path] = None
     
